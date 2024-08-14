@@ -1,6 +1,10 @@
-import { createInstance, hiddenLinkSheets, map, ModelType } from './domain/models';
-import { handleLinkedFields } from './helpers/handleLikedFields';
-import { handleMultiSelectFields } from './helpers/handleMultiSelectFields';
+import { dialogHandler } from './context/DialogContext';
+import { createInstance, ignoredFields, map, ModelType } from './domain/models';
+import {
+  checkIfAllValuesExistInRelatedSheet,
+  handleLinkedFieldsInRelatedSheet,
+  updateRelatedFieldsValues,
+} from './helpers/handleLinkedFieldsOnOtherSheet';
 
 /* global Office */
 Office.onReady(() => {
@@ -29,15 +33,6 @@ export async function createSheetsAndTables() {
       }
       await context.sync();
 
-      // Create hidden link sheets
-      for (const sheetName of hiddenLinkSheets) {
-        try {
-          await createHiddenLinkSheet(context, sheetName);
-        } catch (error) {
-          console.log('Error: ' + error);
-        }
-      }
-
       // Add tables to the sheets
       for (const sheetName of Object.keys(map)) {
         try {
@@ -51,16 +46,6 @@ export async function createSheetsAndTables() {
       for (const sheetName of Object.keys(map)) {
         try {
           await addMultiSelectToLinkFieldsOnSheet(context, sheetName as ModelType);
-        } catch (error) {
-          console.log('Error: ' + error);
-        }
-      }
-
-      // Add event handler to hidden link sheets
-      for (const sheetName of hiddenLinkSheets) {
-        try {
-          const sheet = context.workbook.worksheets.getItem(sheetName);
-          addHiddenLinkSheetHandler(sheet);
         } catch (error) {
           console.log('Error: ' + error);
         }
@@ -80,8 +65,15 @@ async function createTable(context: Excel.RequestContext, sheetName: ModelType) 
   const newClass = createInstance(sheetName);
   const fields = newClass.getFields();
 
-  // If hearer is '@id', replace it with "'@id" to avoid Excel error
+  // If header is '@id', replace it with "'@id" to avoid Excel error
   const headers = fields.map((field) => (field.name === '@id' ? "'@id" : field.name)); // eslint-disable-line quotes
+
+  // Append helper fields for multi-select
+  if (ignoredFields[tableName]) {
+    for (const field of ignoredFields[tableName]) {
+      headers.push(field);
+    }
+  }
 
   // Add a table to the sheet
   const rangeAddress = `A1:${String.fromCharCode(65 + headers.length - 1)}1`;
@@ -93,23 +85,6 @@ async function createTable(context: Excel.RequestContext, sheetName: ModelType) 
   const table = sheet.tables.add(tableRange.getResizedRange(1000, 0), true);
   table.name = tableName;
   table.showTotals = false;
-
-  await context.sync();
-}
-
-async function createHiddenLinkSheet(context: Excel.RequestContext, sheetName: string) {
-  const sheets = context.workbook.worksheets;
-  sheets.load('items/name');
-
-  await context.sync();
-
-  if (sheets.items.find((sheet) => sheet.name === sheetName)) {
-    return;
-  }
-
-  const sheet = sheets.add(sheetName);
-  sheet.visibility = 'Hidden';
-  sheet.protection.protect();
 
   await context.sync();
 }
@@ -136,6 +111,13 @@ async function addMultiSelectToLinkFieldsOnSheet(
     }
   }
 
+  // Add multi-select to the helper fields
+  if (ignoredFields[sheetName]) {
+    for (const field of ignoredFields[sheetName]) {
+      await addMultiSelect(context, sheet, field, field.substring(3), totalRows.count);
+    }
+  }
+
   await context.sync();
 }
 
@@ -151,7 +133,9 @@ async function addMultiSelect(
     .find(fieldName, { completeMatch: true, matchCase: true });
 
   if (!headerRange) {
-    console.log('Field not found in the sheet.');
+    if (dialogHandler) {
+      dialogHandler('Error', `Field ${fieldName} not found in the sheet.`);
+    }
     return;
   }
 
@@ -180,76 +164,176 @@ async function addMultiSelect(
 
   range.load('address');
   await context.sync();
+
+  // Add multi-select change handler to the range
   addMultiSelectHandler(sheet, range.address);
 }
 
 function addMultiSelectHandler(sheet: Excel.Worksheet, rangeAddress: string) {
-  sheet.onChanged.add(async (event) => {
-    if (event.triggerSource === 'ThisLocalAddin') {
-      return;
-    }
-    // console.log('event.changeType: ' + event.changeType);
-    // console.log('event: ' + event.address);
-    // console.log('event: ' + JSON.stringify(event.details));
-    // console.log('event: ' + JSON.stringify(event));
-    // To do: handle event.changeType RangeEdited for deleted or changed ids in @id field
-    // To do: handle event.changeType RowDeleted for deleted rows
-    await Excel.run(async (context) => {
-      try {
-        const activeSheet = context.workbook.worksheets.getActiveWorksheet();
-        const targetCell = event.getRange(context);
-        const idCell = activeSheet.getRange('A' + event.address.slice(1));
-        targetCell.load('address, values, formulas');
-        idCell.load('values');
-        await context.sync();
-
-        if (isCellInRange(targetCell.address, rangeAddress)) {
-          const newValue = event.details.valueAfter.toString();
-          const oldValue = event.details.valueBefore.toString();
-
-          if (!idCell.values || idCell.values[0][0] === '') {
-            targetCell.values = [[event.details.valueBefore.toString()]];
-            return;
-          }
-          if ((newValue === '' || newValue === null) && (oldValue === '' || oldValue === null)) {
-            targetCell.values = [[newValue.toString()]];
-          }
-          if (oldValue && oldValue.toString().indexOf(newValue.toString()) === -1) {
-            targetCell.values = [[oldValue.toString() + ', ' + newValue.toString()]];
-          } else if (oldValue && oldValue.toString().indexOf(newValue.toString()) !== -1) {
-            targetCell.values = [
-              [
-                oldValue
-                  .replace(newValue, '')
-                  .replace(/^, |^,/g, '')
-                  .replace(', ,', '')
-                  .trim(),
-              ],
-            ];
-          }
-          if (!oldValue) {
-            targetCell.values = [[newValue.toString()]];
-          }
-          await handleLinkedFields(event, context);
-        }
-      } catch (error) {
-        console.log('Error: ' + error);
-      }
-    });
-  });
+  sheet.onChanged.add(async (e) => multiSelectEventHandler(e, rangeAddress));
 }
 
-function addHiddenLinkSheetHandler(sheet: Excel.Worksheet) {
-  sheet.onChanged.add(async (event) => {
-    await Excel.run(async (context) => {
-      try {
-        console.log('Event triggered:', event.address);
-        console.log('Event: ', JSON.stringify(event));
-        await handleMultiSelectFields(event, context);
-      } catch (error) {
-        console.log('Error: ' + error);
+async function multiSelectEventHandler(
+  event: Excel.WorksheetChangedEventArgs,
+  rangeAddress: string
+) {
+  if (event.triggerSource === 'ThisLocalAddin') {
+    return;
+  }
+  await Excel.run(async (context) => {
+    try {
+      const activeSheet = context.workbook.worksheets.getActiveWorksheet();
+      activeSheet.load('name');
+      const targetCell = event.getRange(context);
+      targetCell.load('address, values, formulas, rowIndex');
+      await context.sync();
+      const table = activeSheet.tables.getItem(activeSheet.name);
+      const tableRange = table.getRange();
+      const tableHeadersRange = table.getHeaderRowRange();
+      tableHeadersRange.load('values');
+      await context.sync();
+      const idColumnIndex = tableHeadersRange.values[0].indexOf('@id');
+      const idColumn = tableRange.getColumn(idColumnIndex);
+      idColumn.load('values');
+      const idRowIndex = targetCell.rowIndex;
+      const idCell = activeSheet.getRangeByIndexes(idRowIndex, idColumnIndex, 1, 1);
+      idCell.load('values, address');
+      await context.sync();
+      const idColumnValues = idColumn.values;
+
+      // Check if change is in the id column
+      if (idCell.address === targetCell.address) {
+        const newId = event.details.valueAfter.toString();
+        const oldId = event.details.valueBefore.toString();
+
+        // Check if new id is unique
+        if (newId === '' || newId === null) {
+          targetCell.values = [[oldId]];
+          if (dialogHandler) {
+            dialogHandler('Error', 'The new id cannot be empty. Please enter a valid id.');
+          }
+          return;
+        }
+
+        if (
+          idColumnValues.some((v: any[], i: number) => (idRowIndex === i ? false : v[0] === newId))
+        ) {
+          targetCell.values = [[oldId]];
+          if (dialogHandler) {
+            dialogHandler('Error', 'The new id is not unique. Please enter a unique id.');
+          }
+          return;
+        }
+
+        // Check if new id is a valid URL
+        try {
+          new URL(newId);
+        } catch (error) {
+          targetCell.values = [[oldId]];
+          if (dialogHandler) {
+            dialogHandler('Error', 'The new id is not a valid URL. Please enter a valid URL.');
+          }
+          return;
+        }
+
+        targetCell.values = [[newId]];
+
+        // Update related fields values
+        const sheetName = activeSheet.name;
+        const newClass = createInstance(sheetName as ModelType);
+        const fields = newClass.getFields();
+
+        for (const field of fields) {
+          if (field.link) {
+            const relatedClass = createInstance(field.link.className as ModelType);
+            const relatedFields = relatedClass.getFields();
+            const relatedFieldName = relatedFields.find((f) => f.link?.className === sheetName);
+            if (relatedFieldName) {
+              await updateRelatedFieldsValues(
+                context,
+                field.link.className,
+                relatedFieldName.name,
+                oldId,
+                newId
+              );
+            }
+          }
+        }
+
+        // Update related helper fields values
+        if (ignoredFields[sheetName]) {
+          for (const field of ignoredFields[sheetName]) {
+            const fieldName = field.startsWith('has') ? 'for' + sheetName : 'has' + sheetName;
+            await updateRelatedFieldsValues(context, field.substring(3), fieldName, oldId, newId);
+          }
+        }
+
+        return;
       }
-    });
+
+      if (isCellInRange(targetCell.address, rangeAddress)) {
+        const newValue: string = event.details.valueAfter.toString();
+        const oldValue: string = event.details.valueBefore.toString();
+        const newValueArray = newValue.split(', ');
+        const oldValueArray = oldValue.split(', ');
+
+        // Get the field name or table header
+        const columnLetter: string = targetCell.address.split('!')[1].split('')[0];
+        const fieldRange = activeSheet.getRange(columnLetter + '1');
+        fieldRange.load('values');
+        await context.sync();
+        const fieldName: string = fieldRange.values[0][0];
+
+        if (!idCell.values || idCell.values[0][0] === '') {
+          targetCell.values = [[oldValue]];
+          return;
+        }
+
+        if (!(await checkIfAllValuesExistInRelatedSheet(context, fieldName.slice(3), newValue))) {
+          targetCell.values = [[oldValue]];
+          if (dialogHandler) {
+            dialogHandler('Error', 'Invalid value. Please select a value from the list.');
+          }
+          return;
+        }
+
+        // Avoid second event trigger
+        if (!(await checkIfAllValuesExistInRelatedSheet(context, fieldName.slice(3), oldValue))) {
+          return;
+        }
+
+        let targetCellValue;
+
+        if ((newValue === '' || newValue === null) && (oldValue === '' || oldValue === null)) {
+          targetCellValue = [[newValue.toString()]];
+        }
+        if (newValueArray.length > 1 && oldValueArray.length > 1 && newValue === oldValue) {
+          targetCellValue = [[oldValue]];
+          return;
+        }
+        if (oldValue && oldValueArray.indexOf(newValue) === -1) {
+          targetCellValue = [[oldValue + ', ' + newValue]];
+        } else if (oldValue && oldValueArray.indexOf(newValue) !== -1) {
+          const newValues = oldValueArray.filter((value: string) => value !== newValue);
+          targetCellValue = [[newValues.join(', ')]];
+        }
+        if (!oldValue) {
+          targetCellValue = [[newValue]];
+        }
+
+        targetCell.values = targetCellValue || [[oldValue]];
+
+        await handleLinkedFieldsInRelatedSheet(
+          context,
+          fieldName.slice(3),
+          `${fieldName.startsWith('has') ? 'for' : 'has'}${activeSheet.name}`,
+          idCell.values[0][0].toString(),
+          targetCellValue ? targetCellValue[0][0] : oldValue.toString()
+        );
+      }
+    } catch (error) {
+      console.log('Error: ' + error);
+    }
   });
 }
 
@@ -317,7 +401,9 @@ async function addMultiSelectHandlerToAllTables() {
                 .find(field.name, { completeMatch: true, matchCase: true });
 
               if (!headerRange) {
-                console.log('Field not found in the sheet.');
+                if (dialogHandler) {
+                  dialogHandler('Error', `Field ${field.name} not found in the sheet.`);
+                }
                 return;
               }
               // Get the column index of the field to add data validation
@@ -332,12 +418,6 @@ async function addMultiSelectHandlerToAllTables() {
               addMultiSelectHandler(sheet, range.address);
             }
           }
-        }
-      }
-
-      for (const sheet of sheets.items) {
-        if (hiddenLinkSheets.includes(sheet.name)) {
-          addHiddenLinkSheetHandler(sheet);
         }
       }
 

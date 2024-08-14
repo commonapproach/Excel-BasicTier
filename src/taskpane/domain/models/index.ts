@@ -1,10 +1,13 @@
 import { Indicator } from './Indicator';
 import { IndicatorReport } from './IndicatorReport';
+import { Organization } from './Organization';
+import { Outcome } from './Outcome';
+import { Theme } from './Theme';
 
 export const map = {
-  // Organization,
-  // Theme,
-  // Outcome,
+  Organization,
+  Theme,
+  Outcome,
   Indicator,
   IndicatorReport,
 };
@@ -19,18 +22,7 @@ export function createInstance<T extends ModelType>(sheetName: T) {
   return new Model();
 }
 
-export const hiddenLinkSheets = ['IndicatorToIndicatorReport'];
-
-export const mapToHiddenLinkSheet: { [key: string]: { [key: string]: string } } = {
-  Indicator: {
-    hasIndicatorReport: 'IndicatorToIndicatorReport',
-  },
-  IndicatorReport: {
-    forIndicator: 'IndicatorToIndicatorReport',
-  },
-};
-
-export const ignoredFields = {
+export const ignoredFields: { [key: string]: string[] } = {
   Theme: ['hasOutcome'],
   Outcome: ['forOrganization'],
   Indicator: ['forOrganization', 'forOutcome'],

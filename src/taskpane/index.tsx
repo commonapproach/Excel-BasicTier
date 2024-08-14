@@ -3,6 +3,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './components/App';
+import DialogContextProvider from './context/DialogContext';
 
 const title = 'Common Impact Data Standard Add-in';
 
@@ -13,7 +14,9 @@ const root = rootElement ? createRoot(rootElement) : undefined;
 Office.onReady(() => {
   root?.render(
     <FluentProvider theme={webLightTheme}>
-      <App title={title} />
+      <DialogContextProvider>
+        <App title={title} />
+      </DialogContextProvider>
     </FluentProvider>
   );
 });
