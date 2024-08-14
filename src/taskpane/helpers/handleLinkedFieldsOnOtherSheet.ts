@@ -38,7 +38,7 @@ export async function handleLinkedFieldsInRelatedSheet(
     for (let i = 0; i < relatedFieldValues.length; i++) {
       const idColumnValue = idColumnValues[i][0].toString();
       const relatedFieldValue = relatedFieldValues[i][0].toString();
-      const relatedFieldValueArray = relatedFieldValue.split(', ');
+      const relatedFieldValueArray: string[] = relatedFieldValue.split(', ');
 
       if (!idColumnValue) {
         continue;
@@ -48,7 +48,7 @@ export async function handleLinkedFieldsInRelatedSheet(
         // Remove the id from the array
         const newValueArray = relatedFieldValueArray.filter((v: string) => v !== id);
         const newValue = newValueArray.join(', ');
-        relatedFieldColumn.getCell(i, 0).values = newValue;
+        relatedFieldColumn.getCell(i, 0).values = [[newValue]];
       } else if (
         value &&
         !valueArray.includes(idColumnValue) &&
@@ -58,7 +58,7 @@ export async function handleLinkedFieldsInRelatedSheet(
         // Remove the id from the array
         const newValueArray = relatedFieldValueArray.filter((v: string) => v !== id);
         const newValue = newValueArray.join(', ');
-        relatedFieldColumn.getCell(i, 0).values = newValue;
+        relatedFieldColumn.getCell(i, 0).values = [[newValue]];
       } else if (
         value &&
         valueArray.includes(idColumnValue) &&
@@ -68,7 +68,7 @@ export async function handleLinkedFieldsInRelatedSheet(
         const newValueArray = relatedFieldValue ? relatedFieldValueArray : [];
         newValueArray.push(id);
         const newValue = newValueArray.join(', ');
-        relatedFieldColumn.getCell(i, 0).values = newValue;
+        relatedFieldColumn.getCell(i, 0).values = [[newValue]];
       }
     }
 
@@ -131,14 +131,6 @@ export async function updateRelatedFieldsValues(
   newValue: string
 ) {
   try {
-    console.log(
-      'updateRelatedFieldsValues',
-      relatedTableName,
-      relatedFieldName,
-      oldValue,
-      newValue
-    );
-
     // Find the related field column in the related table
     const worksheet = context.workbook.worksheets.getItem(relatedTableName);
     worksheet.load('tables');
@@ -153,8 +145,6 @@ export async function updateRelatedFieldsValues(
     // Get the index of the related field in the related table
     const relatedFieldIndex = tableHeadersRange.values[0].indexOf(relatedFieldName);
 
-    console.log('relatedFieldIndex', relatedFieldIndex);
-
     // For all cells in the related field column, check if the cell value is stringified array and if the id is in the array
     const relatedFieldColumn = tableRange.getColumn(relatedFieldIndex);
     relatedFieldColumn.load('values');
@@ -164,7 +154,7 @@ export async function updateRelatedFieldsValues(
     // For each cell in the related field column, check if the id is in the array
     for (let i = 0; i < relatedFieldValues.length; i++) {
       const relatedFieldValue = relatedFieldValues[i][0].toString();
-      const relatedFieldValueArray = relatedFieldValue.split(', ');
+      const relatedFieldValueArray: string[] = relatedFieldValue.split(', ');
 
       if (!relatedFieldValue) {
         continue;
@@ -176,7 +166,7 @@ export async function updateRelatedFieldsValues(
           v === oldValue ? newValue : v
         );
         const newValues = newValueArray.join(', ');
-        relatedFieldColumn.getCell(i, 0).values = newValues;
+        relatedFieldColumn.getCell(i, 0).values = [[newValues]];
       }
     }
 

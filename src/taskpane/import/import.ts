@@ -195,6 +195,7 @@ async function writeTableLinked(
   context: Excel.RequestContext,
   tableData: TableInterface[]
 ): Promise<void> {
+  console.log('tableData', tableData);
   for (const data of tableData) {
     const tableName = data['@type'].split(':')[1];
     const recordId = data['@id'];
@@ -220,6 +221,12 @@ async function writeTableLinked(
     // Create the record
     const record: { [key: string]: unknown } = {};
     for (let [key, value] of Object.entries(data)) {
+      if (key === 'value') {
+        key = 'i72:value';
+      }
+      if (key === 'hasLegalName') {
+        key = 'org:hasLegalName';
+      }
       const cid = new map[tableName as ModelType]();
       if (key !== '@type' && key !== '@context' && cid.getFieldByName(key)?.type === 'link') {
         // Skip if the value is empty
@@ -233,37 +240,52 @@ async function writeTableLinked(
 
         record[key] = value;
       }
+    }
 
-      // Add or Update the record on the table
-      // check if the record already exists
-      const idColumnValue = idColumnValues.map((item) => item[0].toString());
-      const idIndex = idColumnValue.indexOf(recordId);
-      let row: Excel.Range;
-      if (idIndex !== -1) {
-        row = tableRange.getRow(idIndex);
-      } else {
-        // Add the record
-        // Get first row with empty id
-        const emptyIdIndex = idColumnValue.indexOf('');
-        row = tableRange.getRow(emptyIdIndex);
-      }
-      row.load('values');
-      context.trackedObjects.add(row);
-      await context.sync();
+    // Add or Update the record on the table
+    // check if the record already exists
+    const idColumnValue = idColumnValues.map((item) => item[0].toString());
+    let idIndex = idColumnValue.indexOf(recordId);
+    let row: Excel.Range;
+    if (idIndex !== -1) {
+      row = tableRange.getRow(idIndex);
+    } else {
+      // Add the record
+      // Get first row with empty id
+      idIndex = idColumnValue.indexOf('');
+      row = tableRange.getRow(idIndex);
+    }
+    row.load('values');
+    context.trackedObjects.add(row);
+    await context.sync();
+    const rowValues = row.values[0];
 
-      // Update the record
-      for (const [key, value] of Object.entries(record)) {
-        const columnIndex = tableHeaderRange.values[0].indexOf(key);
-        row.values = row.values || [];
-        row.values[0][columnIndex] = [
-          ...new Set([...(row.values[0][columnIndex] || []), ...(value as string[])]),
-        ].join(', ');
-      }
+    // Update the record
+    for (let [key, value] of Object.entries(record)) {
+      const columnIndex = tableHeaderRange.values[0].indexOf(key);
+      value = [
+        ...new Set([
+          ...((rowValues[columnIndex] as string).split(', ') || []),
+          ...((value as string[]) || []),
+        ]),
+      ].filter((v) => v !== null && v !== undefined && v !== '');
+      row.getCell(0, columnIndex).values = [[(value as string[]).join(', ')]];
+    }
 
-      context.trackedObjects.remove(row);
-      await context.sync();
+    context.trackedObjects.remove(row);
+    await context.sync();
 
-      // TODO: Update the linked tables
+    // Update the linked tables
+    for (const [key, value] of Object.entries(record)) {
+      const relatedTableName = key.substring(3);
+      const relatedFieldName = key.startsWith('has') ? `for${tableName}` : `has${tableName}`;
+      await updateLinkedTablesFields(
+        context,
+        recordId,
+        value as string[],
+        relatedTableName,
+        relatedFieldName
+      );
     }
 
     context.trackedObjects.remove(idColumn);
@@ -272,6 +294,79 @@ async function writeTableLinked(
     context.trackedObjects.remove(worksheet);
     await context.sync();
   }
+}
+
+async function updateLinkedTablesFields(
+  context: Excel.RequestContext,
+  currentFieldId: string,
+  currentFiledValues: string[],
+  relatedTableName: string,
+  relatedFieldName: string
+) {
+  const worksheet = context.workbook.worksheets.getItem(relatedTableName);
+  worksheet.load('tables');
+  context.trackedObjects.add(worksheet);
+  await context.sync();
+  const table = worksheet.tables.getItem(relatedTableName);
+  const tableHeadersRange = table.getHeaderRowRange();
+  const tableRange = table.getRange();
+  tableHeadersRange.load('values');
+  tableRange.load('values');
+  context.trackedObjects.add(tableHeadersRange);
+  context.trackedObjects.add(tableRange);
+  await context.sync();
+  const relatedFieldIndex = tableHeadersRange.values[0].indexOf(relatedFieldName);
+  const idColumnIndex = tableHeadersRange.values[0].indexOf('@id');
+  const relatedFieldColumn = tableRange.getColumn(relatedFieldIndex);
+  const idColumn = tableRange.getColumn(idColumnIndex);
+  relatedFieldColumn.load('values');
+  idColumn.load('values');
+  context.trackedObjects.add(relatedFieldColumn);
+  context.trackedObjects.add(idColumn);
+  await context.sync();
+  const relatedFieldValues = relatedFieldColumn.values;
+  const idColumnValues = idColumn.values;
+
+  // For each cell in the related field column, check if the id is in the array
+  for (let i = 0; i < relatedFieldValues.length; i++) {
+    const idColumnValue = idColumnValues[i][0].toString();
+    const relatedFieldValue = relatedFieldValues[i][0].toString();
+    const relatedFieldValueArray: string[] = relatedFieldValue.split(', ');
+
+    if (!idColumnValue) {
+      continue;
+    }
+
+    if (
+      !currentFiledValues.includes(idColumnValue) &&
+      relatedFieldValueArray.includes(currentFieldId)
+    ) {
+      // Remove the id from the array
+      const newValueArray = relatedFieldValueArray.filter((v: string) => v !== currentFieldId);
+      const newValue = newValueArray.join(', ');
+      relatedFieldColumn.getCell(i, 0).values = [[newValue]];
+    } else if (
+      currentFiledValues.includes(idColumnValue) &&
+      !relatedFieldValueArray.includes(currentFieldId)
+    ) {
+      // Add the id to the array
+      relatedFieldColumn.getCell(i, 0).values = [
+        [
+          relatedFieldValueArray
+            .concat(currentFieldId)
+            .filter((v) => v !== null && v !== undefined && v !== '')
+            .join(', '),
+        ],
+      ];
+    }
+  }
+
+  context.trackedObjects.remove(relatedFieldColumn);
+  context.trackedObjects.remove(idColumn);
+  context.trackedObjects.remove(tableRange);
+  context.trackedObjects.remove(tableHeadersRange);
+  context.trackedObjects.remove(worksheet);
+  await context.sync();
 }
 
 function removeDuplicatedLinks(jsonData: any) {

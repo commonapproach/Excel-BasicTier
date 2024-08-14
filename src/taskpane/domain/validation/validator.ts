@@ -240,7 +240,10 @@ function validateLinkedFields(tableData: TableInterface[]) {
       }
 
       if (!Array.isArray(data[fieldName])) {
-        data[fieldName] = [];
+        data[fieldName] =
+          typeof data[fieldName] === 'string' && data[fieldName].length > 0
+            ? [data[fieldName]]
+            : [];
       }
 
       const linkedTable = field.link.className;
