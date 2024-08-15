@@ -338,14 +338,6 @@ async function updateLinkedTablesFields(
     }
 
     if (
-      !currentFiledValues.includes(idColumnValue) &&
-      relatedFieldValueArray.includes(currentFieldId)
-    ) {
-      // Remove the id from the array
-      const newValueArray = relatedFieldValueArray.filter((v: string) => v !== currentFieldId);
-      const newValue = newValueArray.join(', ');
-      relatedFieldColumn.getCell(i, 0).values = [[newValue]];
-    } else if (
       currentFiledValues.includes(idColumnValue) &&
       !relatedFieldValueArray.includes(currentFieldId)
     ) {

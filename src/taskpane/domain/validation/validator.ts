@@ -39,7 +39,7 @@ function validateRecords(tableData: TableInterface[], operation: Operation) {
   // Records to keep track of unique values
   const uniqueRecords: Record<string, Set<any>> = {};
 
-  validateLinkedFields(tableData);
+  validateLinkedFields(tableData, operation);
 
   for (const data of tableData) {
     if (validateTypeProp(data)) return;
@@ -222,7 +222,7 @@ function validateTypeProp(data: any): boolean {
   return false;
 }
 
-function validateLinkedFields(tableData: TableInterface[]) {
+function validateLinkedFields(tableData: TableInterface[], operation: Operation) {
   for (const data of tableData) {
     if (validateTypeProp(data)) return;
     const tableName = data['@type'].split(':')[1];
@@ -232,14 +232,18 @@ function validateLinkedFields(tableData: TableInterface[]) {
     const linkedFields = fields.filter((field) => field.type === 'link');
     linkedFields.forEach((field) => {
       const fieldName = field.name;
-      if (!data[fieldName]) {
+      if (!data[fieldName] && (field.required || field.semiRequired)) {
         validatorWarnings.add(
           `${tableName} <b>${data['org:hasLegalName'] || data['hasLegalName'] || data['hasName']}</b> has no ${fieldName.substring(3)}`
         );
         data[fieldName] = [];
       }
 
+      let isString = false;
       if (!Array.isArray(data[fieldName])) {
+        if (typeof data[fieldName] === 'string') {
+          isString = true;
+        }
         data[fieldName] =
           typeof data[fieldName] === 'string' && data[fieldName].length > 0
             ? [data[fieldName]]
@@ -264,6 +268,10 @@ function validateLinkedFields(tableData: TableInterface[]) {
           );
         }
       });
+
+      if (isString && operation === 'export') {
+        data[fieldName] = data[fieldName][0];
+      }
     });
   }
 }

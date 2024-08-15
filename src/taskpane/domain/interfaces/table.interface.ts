@@ -10,5 +10,11 @@ export type TableInterface = {
         '@type': string;
         numerical_value: string;
         unit_of_measure: string;
+      }
+    | {
+        '@context': string;
+        '@type': string;
+        'i72:numerical_value': string;
+        'i72:unit_of_measure': string;
       };
 };

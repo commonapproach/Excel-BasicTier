@@ -8,6 +8,7 @@ import * as React from 'react';
 import { useDialogContext } from '../context/DialogContext';
 import { importData } from '../import/import';
 import { createSheetsAndTables } from '../taskpane';
+import ExportDialog from './ExportDialog';
 import Header from './Header';
 
 interface AppProps {
@@ -26,6 +27,7 @@ const App: React.FC<AppProps> = ({ title }) => {
   const dialog = useDialogContext();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = React.useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = React.useState(false);
 
   const handleImportData = () => {
     if (fileInputRef.current) {
@@ -57,6 +59,10 @@ const App: React.FC<AppProps> = ({ title }) => {
 
   return (
     <div className={styles.root}>
+      <ExportDialog
+        isDialogOpen={isExportDialogOpen}
+        setDialogOpen={setIsExportDialogOpen}
+      />
       <Header
         logo='assets/logo.png'
         title={title}
@@ -96,11 +102,12 @@ const App: React.FC<AppProps> = ({ title }) => {
         <Button
           content='Export Data'
           onClick={() => {
-            dialog.showDialog('Exporting Data', 'Exporting data...', () => {});
+            setIsExportDialogOpen(true);
           }}
           appearance='primary'
           icon={<ArrowExport16Filled />}
           iconPosition='before'
+          disabled={isImporting}
         >
           Export Data
         </Button>
