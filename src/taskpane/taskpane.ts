@@ -122,6 +122,9 @@ async function createTable(context: Excel.RequestContext, sheetName: ModelType) 
     table = sheet.tables.add(tableRange.getResizedRange(1000, 0), true);
     table.name = tableName;
     table.showTotals = false;
+    table.getRange().format.wrapText = true;
+    table.getRange().format.verticalAlignment = 'Center';
+    table.getHeaderRowRange().format.columnWidth = 220;
     sheet.freezePanes.freezeRows(1);
   }
 

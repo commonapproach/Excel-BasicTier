@@ -79,6 +79,30 @@ async function importFileData(
 }
 
 async function importByData(context: Excel.RequestContext, jsonData: any) {
+  // Set active worksheet Waiting sheet
+  const randomValue = Math.random().toString(36).substring(7);
+  const waitingSheetName = `Waiting${randomValue}`;
+  const worksheets = context.workbook.worksheets;
+  worksheets.load('items');
+  await context.sync();
+  let waitingSheetExists = false;
+  for (const worksheet of worksheets.items) {
+    if (worksheet.name === waitingSheetName) {
+      worksheet.activate();
+      waitingSheetExists = true;
+    }
+  }
+  if (!waitingSheetExists) {
+    const waitingSheet = worksheets.add(waitingSheetName);
+    waitingSheet.activate();
+  }
+  await context.sync();
+
+  // Write message to A1 warning users to do not edit the workbook while importing
+  const range = context.workbook.worksheets.getItem(waitingSheetName).getRange('A1');
+  range.values = [['Do not edit the workbook while importing!']];
+  await context.sync();
+
   // Create Tables if they don't exist
   await createSheetsAndTables();
 
@@ -87,6 +111,25 @@ async function importByData(context: Excel.RequestContext, jsonData: any) {
 
   // Write Linked Records to Tables
   await writeTableLinked(context, jsonData);
+
+  // Resize the tables
+  worksheets.load('items');
+  await context.sync();
+  for (const worksheet of worksheets.items) {
+    const tables = worksheet.tables;
+    tables.load('items');
+    await context.sync();
+    for (const table of tables.items) {
+      table.getRange().format.autofitColumns();
+      table.getRange().format.autofitRows();
+    }
+  }
+  await context.sync();
+
+  // Remove the waiting sheet
+  const waitingSheet = context.workbook.worksheets.getItem(waitingSheetName);
+  waitingSheet.delete();
+  await context.sync();
 }
 
 async function writeTable(
