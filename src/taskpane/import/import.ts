@@ -195,7 +195,6 @@ async function writeTableLinked(
   context: Excel.RequestContext,
   tableData: TableInterface[]
 ): Promise<void> {
-  console.log('tableData', tableData);
   for (const data of tableData) {
     const tableName = data['@type'].split(':')[1];
     const recordId = data['@id'];
@@ -228,7 +227,12 @@ async function writeTableLinked(
         key = 'org:hasLegalName';
       }
       const cid = new map[tableName as ModelType]();
-      if (key !== '@type' && key !== '@context' && cid.getFieldByName(key)?.type === 'link') {
+      if (
+        key !== '@type' &&
+        key !== '@context' &&
+        checkIfFieldIsRecognized(tableName, key) &&
+        cid.getFieldByName(key)?.type === 'link'
+      ) {
         // Skip if the value is empty
         if (!value) continue;
 
@@ -392,6 +396,9 @@ function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[]) {
   const warnings = [];
   const classesSet = new Set();
   for (const data of tableData) {
+    if (!data['@type']) {
+      continue;
+    }
     const tableName = data['@type'].split(':')[1];
     if (!Object.keys(map).includes(tableName)) {
       continue;

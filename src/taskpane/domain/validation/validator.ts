@@ -6,6 +6,7 @@ type Operation = 'import' | 'export';
 const validatorErrors = new Set<string>();
 const validatorWarnings = new Set<string>();
 
+/* global console */
 export function validate(
   tableData: TableInterface[],
   operation: Operation = 'export'
@@ -104,7 +105,12 @@ function validateRecords(tableData: TableInterface[], operation: Operation) {
         fieldName = 'org:hasLegalName';
       }
 
-      const fieldProps: any = cid.getFieldByName(fieldName);
+      let fieldProps: any = null;
+      try {
+        fieldProps = cid.getFieldByName(fieldName);
+      } catch (_) {
+        continue;
+      }
 
       if (!fieldProps) {
         continue;
@@ -232,10 +238,7 @@ function validateLinkedFields(tableData: TableInterface[], operation: Operation)
     const linkedFields = fields.filter((field) => field.type === 'link');
     linkedFields.forEach((field) => {
       const fieldName = field.name;
-      if (!data[fieldName] && (field.required || field.semiRequired)) {
-        validatorWarnings.add(
-          `${tableName} <b>${data['org:hasLegalName'] || data['hasLegalName'] || data['hasName']}</b> has no ${fieldName.substring(3)}`
-        );
+      if (!data[fieldName]) {
         data[fieldName] = [];
       }
 
@@ -246,8 +249,30 @@ function validateLinkedFields(tableData: TableInterface[], operation: Operation)
         }
         data[fieldName] =
           typeof data[fieldName] === 'string' && data[fieldName].length > 0
-            ? [data[fieldName]]
+            ? [...data[fieldName].split(', ')]
             : [];
+      }
+
+      if (data[fieldName].length === 0) {
+        const msg = `${tableName} <b>${data['org:hasLegalName'] || data['hasLegalName'] || data['hasName']}</b> has no ${fieldName.substring(3)}`;
+        if (field.required && operation === 'export') {
+          validatorErrors.add(msg);
+        } else if (field.required || field.semiRequired) {
+          validatorWarnings.add(msg);
+        }
+      }
+
+      if (isString && data[fieldName].length > 1) {
+        if (operation === 'import') {
+          validatorWarnings.add(
+            `Multiple values found in field <b>${fieldName}</b> at id ${data['@id']} on table <b>${tableName}</b>. Only the first value ${data[fieldName][0]} will be considered`
+          );
+        } else {
+          validatorErrors.add(
+            `Multiple values found in field <b>${fieldName}</b> at id ${data['@id']} on table <b>${tableName}</b>.`
+          );
+        }
+        data[fieldName] = [data[fieldName][0]];
       }
 
       const linkedTable = field.link.className;

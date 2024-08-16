@@ -75,16 +75,55 @@ async function createTable(context: Excel.RequestContext, sheetName: ModelType) 
     }
   }
 
-  // Add a table to the sheet
-  const rangeAddress = `A1:${String.fromCharCode(65 + headers.length - 1)}1`;
-  const tableRange = sheet.getRange(rangeAddress);
-  tableRange.values = [headers];
-  tableRange.format.autofitColumns();
+  let table: Excel.Table | null;
 
-  // Resize the range to 1000 rows
-  const table = sheet.tables.add(tableRange.getResizedRange(1000, 0), true);
-  table.name = tableName;
-  table.showTotals = false;
+  // Check if the table already exists
+  try {
+    table = sheet.tables.getItem(tableName);
+    await context.sync();
+  } catch (error) {
+    table = null;
+  }
+
+  if (table) {
+    // Check if the table has the correct headers
+    const tableHeaders = table.getHeaderRowRange();
+    tableHeaders.load('values');
+    await context.sync();
+    const tableHeadersValues = tableHeaders.values[0];
+
+    // Check if the table has the correct headers
+    const headersToAdd: string[] = [];
+    for (let header of headers) {
+      // eslint-disable-next-line quotes
+      if (header === "'@id") {
+        header = '@id';
+      }
+      if (!tableHeadersValues.includes(header)) {
+        headersToAdd.push(header);
+      }
+    }
+
+    // Expand the table to add the new headers
+    if (headersToAdd.length > 0) {
+      const newHeaders = tableHeadersValues.concat(headersToAdd);
+      const headersRange = tableHeaders.getResizedRange(0, headersToAdd.length);
+      headersRange.values = [newHeaders];
+    }
+  } else {
+    // Add a table to the sheet
+    const rangeAddress = `A1:${String.fromCharCode(65 + headers.length - 1)}1`;
+    const tableRange = sheet.getRange(rangeAddress);
+    tableRange.values = [headers];
+    tableRange.format.autofitColumns();
+    tableRange.format.autofitRows();
+
+    // Resize the range to 1000 rows
+    table = sheet.tables.add(tableRange.getResizedRange(1000, 0), true);
+    table.name = tableName;
+    table.showTotals = false;
+    sheet.freezePanes.freezeRows(1);
+  }
 
   await context.sync();
 }
@@ -180,6 +219,15 @@ async function multiSelectEventHandler(
   if (event.triggerSource === 'ThisLocalAddin') {
     return;
   }
+  if (!event.details) {
+    if (dialogHandler) {
+      dialogHandler(
+        'Wanning!',
+        'Changes for range are not supported. If you are trying to change fields that might be linked, please undo the operation and do it one by one.'
+      );
+    }
+    return;
+  }
   await Excel.run(async (context) => {
     try {
       const activeSheet = context.workbook.worksheets.getActiveWorksheet();
@@ -196,25 +244,35 @@ async function multiSelectEventHandler(
       const idColumn = tableRange.getColumn(idColumnIndex);
       idColumn.load('values');
       const idRowIndex = targetCell.rowIndex;
+      const idRow = tableRange.getRow(idRowIndex);
       const idCell = activeSheet.getRangeByIndexes(idRowIndex, idColumnIndex, 1, 1);
+      idRow.load('values');
       idCell.load('values, address');
       await context.sync();
       const idColumnValues = idColumn.values;
+      const idRowValues = idRow.values[0];
 
       // Check if change is in the id column
       if (idCell.address === targetCell.address) {
         const newId = event.details.valueAfter.toString();
         const oldId = event.details.valueBefore.toString();
 
-        // Check if new id is unique
         if (newId === '' || newId === null) {
-          targetCell.values = [[oldId]];
-          if (dialogHandler) {
-            dialogHandler('Error', 'The new id cannot be empty. Please enter a valid id.');
+          if (idRowValues.some((v: any) => v !== '')) {
+            targetCell.values = [[oldId]];
+            if (dialogHandler) {
+              dialogHandler(
+                'Error',
+                'The id cannot be empty for a row with values. Please remove all values first.'
+              );
+            }
+            return;
           }
+          targetCell.values = [[newId]];
           return;
         }
 
+        // Check if new id is unique
         if (
           idColumnValues.some((v: any[], i: number) => (idRowIndex === i ? false : v[0] === newId))
         ) {

@@ -1,8 +1,8 @@
 import { Button, makeStyles } from '@fluentui/react-components';
 import {
-  ArrowExport16Filled,
-  ArrowImport16Filled,
-  DesignIdeas24Regular,
+  Add24Regular,
+  ArrowCircleDown24Regular,
+  ArrowCircleUp24Regular,
 } from '@fluentui/react-icons';
 import * as React from 'react';
 import { useDialogContext } from '../context/DialogContext';
@@ -11,18 +11,27 @@ import { createSheetsAndTables } from '../taskpane';
 import ExportDialog from './ExportDialog';
 import Header from './Header';
 
-interface AppProps {
-  title: string;
-}
+interface AppProps {}
 
 const useStyles = makeStyles({
   root: {
     minHeight: '100vh',
     width: '100%',
   },
+  buttons_group: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: '1rem',
+    gap: '1rem',
+  },
+  button: {
+    width: '160px',
+  },
 });
 
-const App: React.FC<AppProps> = ({ title }) => {
+const App: React.FC<AppProps> = () => {
   const styles = useStyles();
   const dialog = useDialogContext();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -63,39 +72,20 @@ const App: React.FC<AppProps> = ({ title }) => {
         isDialogOpen={isExportDialogOpen}
         setDialogOpen={setIsExportDialogOpen}
       />
-      <Header
-        logo='assets/logo.png'
-        title={title}
-        message='Common Impact Data Standard'
-      />
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          margin: '1rem',
-          gap: '1rem',
-        }}
-      >
-        <Button
-          content='Create Sheets and Tables'
-          onClick={() => {
-            createSheetsAndTables();
-          }}
-          appearance='primary'
-          icon={<DesignIdeas24Regular />}
-          iconPosition='before'
-        >
-          Create Sheets and Tables
-        </Button>
+      <Header />
+      <div className={styles.buttons_group}>
         <Button
           content='Import Data'
           onClick={handleImportData}
-          appearance='primary'
-          icon={<ArrowImport16Filled />}
+          appearance='outline'
+          icon={<ArrowCircleUp24Regular />}
           iconPosition='before'
           disabled={isImporting}
+          className={styles.button}
+          style={{
+            borderColor: 'rgb(60, 174, 163)',
+            color: 'rgb(60, 174, 163)',
+          }}
         >
           Import Data
         </Button>
@@ -104,12 +94,35 @@ const App: React.FC<AppProps> = ({ title }) => {
           onClick={() => {
             setIsExportDialogOpen(true);
           }}
-          appearance='primary'
-          icon={<ArrowExport16Filled />}
+          appearance='outline'
+          icon={<ArrowCircleDown24Regular />}
           iconPosition='before'
           disabled={isImporting}
+          className={styles.button}
+          style={{
+            borderColor: 'rgb(80, 183, 224)',
+            color: 'rgb(80, 183, 224)',
+          }}
         >
           Export Data
+        </Button>
+        <Button
+          content='Create Sheets and Tables'
+          onClick={() => {
+            createSheetsAndTables();
+          }}
+          appearance='outline'
+          color='brand'
+          icon={<Add24Regular />}
+          iconPosition='before'
+          disabled={isImporting}
+          className={styles.button}
+          style={{
+            borderColor: 'rgb(45, 98, 215)',
+            color: 'rgb(45, 98, 215)',
+          }}
+        >
+          Create Tables
         </Button>
       </div>
       <input

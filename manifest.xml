@@ -7,8 +7,8 @@
   <Version>1.0.0.0</Version>
   <ProviderName>Common Approach To Impact Measurement</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="common-approach-add-in" />
-  <Description DefaultValue="A template to get started." />
+  <DisplayName DefaultValue="Common Approach Excel Add-in" />
+  <Description DefaultValue="A utility to share and aggregate impact data from multiple softwares." />
   <IconUrl DefaultValue="https://localhost:3000/assets/logo-32x32.png" />
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/logo-64x64.png" />
   <SupportUrl DefaultValue="https://www.commonapproach.org/" />
@@ -77,14 +77,15 @@
         <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html" />
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="GetStarted.Title" DefaultValue="Get started with your sample add-in!" />
+        <bt:String id="GetStarted.Title"
+          DefaultValue="Get started with Common Approach to Impact Measurement add-in!" />
         <bt:String id="CommandsGroup.Label" DefaultValue="Commands Group" />
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Show Taskpane" />
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Start Editing" />
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description"
-          DefaultValue="Your sample add-in loaded succesfully. Go to the HOME tab and click the 'Show Taskpane' button to get started." />
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Show a Taskpane" />
+          DefaultValue="The Common Approach to Impact Measurement add-in loaded succesfully. Go to the HOME tab and click the 'Start Editing' button to get started." />
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Open the Taskpane" />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

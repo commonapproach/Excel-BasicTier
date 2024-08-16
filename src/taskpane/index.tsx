@@ -5,8 +5,6 @@ import { createRoot } from 'react-dom/client';
 import App from './components/App';
 import DialogContextProvider from './context/DialogContext';
 
-const title = 'Common Impact Data Standard Add-in';
-
 const rootElement: HTMLElement | null = document.getElementById('container');
 const root = rootElement ? createRoot(rootElement) : undefined;
 
@@ -15,7 +13,7 @@ Office.onReady(() => {
   root?.render(
     <FluentProvider theme={webLightTheme}>
       <DialogContextProvider>
-        <App title={title} />
+        <App />
       </DialogContextProvider>
     </FluentProvider>
   );
