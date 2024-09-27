@@ -10,6 +10,7 @@ const root = rootElement ? createRoot(rootElement) : undefined;
 
 /* Render application after Office initializes */
 Office.onReady(() => {
+  const language = Office.context.displayLanguage;
   root?.render(
     <FluentProvider theme={webLightTheme}>
       <DialogContextProvider>

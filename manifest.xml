@@ -6,9 +6,23 @@
   <Id>95c11482-1b19-4b93-ab9a-1c6d8fd5d8de</Id>
   <Version>1.0.0.0</Version>
   <ProviderName>Common Approach To Impact Measurement</ProviderName>
-  <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Common Approach Excel Add-in" />
-  <Description DefaultValue="A utility to share and aggregate impact data from multiple softwares." />
+  <DefaultLocale>en-CA</DefaultLocale>
+  <DisplayName DefaultValue="Common Impact Data Standard">
+    <Override Locale="en-US" Value="Common Impact Data Standard" />
+    <Override Locale="en-CA" Value="Common Impact Data Standard" />
+    <Override Locale="fr-FR" Value="Norme de données d'impact commun" />
+    <Override Locale="fr-CA" Value="Norme de données d'impact commun" />
+  </DisplayName>
+  <Description DefaultValue="A utility to share and aggregate impact data from multiple softwares.">
+    <Override Locale="en-US"
+      Value="A utility to share and aggregate impact data from multiple softwares." />
+    <Override Locale="en-CA"
+      Value="A utility to share and aggregate impact data from multiple softwares." />
+    <Override Locale="fr-FR"
+      Value="Un utilitaire pour partager et agréger les données d'impact de plusieurs logiciels." />
+    <Override Locale="fr-CA"
+      Value="Un utilitaire pour partager et agréger les données d'impact de plusieurs logiciels." />
+  </Description>
   <IconUrl DefaultValue="https://localhost:3000/assets/logo-32x32.png" />
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/logo-64x64.png" />
   <SupportUrl DefaultValue="https://www.commonapproach.org/" />
@@ -78,14 +92,33 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title"
-          DefaultValue="Get started with Common Approach to Impact Measurement add-in!" />
-        <bt:String id="CommandsGroup.Label" DefaultValue="Commands Group" />
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Start Editing" />
+          DefaultValue="Get started with Common Approach to Impact Measurement add-in!">
+          <bt:Override Locale="fr-FR"
+            Value="Commencez à utiliser l'add-in Common Approach to Impact Measurement !" />
+          <bt:Override Locale="fr-CA"
+            Value="Commencez à utiliser l'add-in Common Approach to Impact Measurement !" />
+        </bt:String>
+        <bt:String id="CommandsGroup.Label" DefaultValue="Commands Group">
+          <bt:Override Locale="fr-FR" Value="Groupe de commandes" />
+          <bt:Override Locale="fr-CA" Value="Groupe de commandes" />
+        </bt:String>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Start Editing">
+          <bt:Override Locale="fr-FR" Value="Commencer l'édition" />
+          <bt:Override Locale="fr-CA" Value="Commencer l'édition" />
+        </bt:String>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description"
-          DefaultValue="The Common Approach to Impact Measurement add-in loaded succesfully. Go to the HOME tab and click the 'Start Editing' button to get started." />
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Open the Taskpane" />
+          DefaultValue="The Common Approach to Impact Measurement add-in loaded succesfully. Go to the HOME tab and click the 'Start Editing' button to get started.">
+          <bt:Override Locale="fr-FR"
+            Value="L'add-in Common Approach to Impact Measurement a été chargé avec succès. Accédez à l'onglet ACCUEIL et cliquez sur le bouton 'Commencer l'édition' pour commencer." />
+          <bt:Override Locale="fr-CA"
+            Value="L'add-in Common Approach to Impact Measurement a été chargé avec succès. Accédez à l'onglet ACCUEIL et cliquez sur le bouton 'Commencer l'édition' pour commencer." />
+        </bt:String>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Open the Taskpane">
+          <bt:Override Locale="fr-FR" Value="Cliquez pour ouvrir le volet de tâches" />
+          <bt:Override Locale="fr-CA" Value="Cliquez pour ouvrir le volet de tâches" />
+        </bt:String>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

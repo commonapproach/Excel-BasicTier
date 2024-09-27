@@ -27,7 +27,7 @@ module.exports = async (env, options) => {
         '@fluentui/react-icons',
       ],
       taskpane: ['./src/taskpane/index.tsx', './src/taskpane/taskpane.html'],
-      commands: './src/commands/commands.ts',
+      commands: ['./src/commands/commands.ts'],
     },
     output: {
       clean: true,
