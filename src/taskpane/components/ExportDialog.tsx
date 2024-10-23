@@ -7,10 +7,11 @@ import {
   DialogSurface,
   DialogTitle,
   Input,
-} from '@fluentui/react-components';
-import React, { useState } from 'react';
-import { useDialogContext } from '../context/DialogContext';
-import { exportData } from '../export/export';
+} from "@fluentui/react-components";
+import React, { useState } from "react";
+import { FormattedMessage, useIntl } from "react-intl";
+import { useDialogContext } from "../context/DialogContext";
+import { exportData } from "../export/export";
 
 interface ExportDialogProps {
   isDialogOpen: boolean;
@@ -19,29 +20,43 @@ interface ExportDialogProps {
 
 const ExportDialog: React.FC<ExportDialogProps> = ({ isDialogOpen, setDialogOpen }) => {
   const { showDialog } = useDialogContext();
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState("");
+  const intl = useIntl();
 
   const handleExport = async () => {
     // Clean the input value to make it compatible with all file systems
-    const cleanedOrgName = inputValue.replace(/[^\w]/gi, '');
+    const cleanedOrgName = inputValue.replace(/[^\w]/gi, "");
 
     // Check if the input value is empty
     if (!cleanedOrgName) {
-      showDialog('Error!', 'Please enter the name of the organization you want to export');
+      showDialog(
+        `${intl.formatMessage({ id: "generics.error" })}!`,
+        intl.formatMessage({ id: "export.messages.enterOrganization" })
+      );
       return;
     }
 
     // Set the cleaned org name using the provided hook
     try {
-      showDialog('Exporting...', 'Please wait while we export the data');
-      await exportData(cleanedOrgName, showDialog);
+      showDialog(
+        intl.formatMessage({ id: "export.messages.exporting" }),
+        intl.formatMessage({ id: "export.messages.waitExport" })
+      );
+      await exportData(intl, cleanedOrgName, showDialog);
     } catch (error: any) {
-      showDialog('Error!', error.message || 'Something went wrong');
+      showDialog(
+        `${intl.formatMessage({ id: "generics.error" })}!`,
+        error.message ||
+          intl.formatMessage({
+            id: "generics.error.message",
+            defaultMessage: "Something went wrong",
+          })
+      );
     }
 
     // Close the dialog
     setDialogOpen(false);
-    setInputValue('');
+    setInputValue("");
   };
 
   return (
@@ -57,37 +72,56 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isDialogOpen, setDialogOpen
         >
           <DialogSurface>
             <DialogBody>
-              <DialogTitle>Export</DialogTitle>
+              <DialogTitle>
+                <FormattedMessage
+                  id="export.button.export"
+                  defaultMessage="Export Data"
+                />
+              </DialogTitle>
               <DialogContent>
-                <p>Enter the name of the organization you want to export:</p>
+                <p>
+                  <FormattedMessage
+                    id="export.messages.enterOrganization"
+                    defaultMessage="Enter the name of the organization you want to export:"
+                  />
+                </p>
                 <Input
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  placeholder={'Enter organization name'}
+                  placeholder={intl.formatMessage({
+                    id: "export.placeholder.organization",
+                    defaultMessage: "Organization name",
+                  })}
                 />
               </DialogContent>
 
               <DialogActions
                 style={{
-                  display: 'flex',
-                  flexDirection: 'row',
-                  justifyContent: 'flex-end',
-                  gap: '1rem',
+                  display: "flex",
+                  flexDirection: "row",
+                  justifyContent: "flex-end",
+                  gap: "1rem",
                 }}
               >
                 <Button
-                  appearance='secondary'
+                  appearance="secondary"
                   onClick={() => {
                     setDialogOpen(false);
                   }}
                 >
-                  Close
+                  <FormattedMessage
+                    id="generics.button.close"
+                    defaultMessage="Cancel"
+                  />
                 </Button>
                 <Button
-                  appearance='primary'
+                  appearance="primary"
                   onClick={handleExport}
                 >
-                  Export
+                  <FormattedMessage
+                    id="export.button.export"
+                    defaultMessage="Export"
+                  />
                 </Button>
               </DialogActions>
             </DialogBody>

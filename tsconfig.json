@@ -10,6 +10,7 @@
     "noUnusedParameters": true,
     "outDir": "dist",
     "removeComments": false,
+    "resolveJsonModule": true,
     "sourceMap": true,
     "jsx": "react",
     "target": "es6",

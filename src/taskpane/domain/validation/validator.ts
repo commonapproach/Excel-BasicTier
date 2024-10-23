@@ -1,34 +1,37 @@
-import { TableInterface } from '../interfaces/table.interface';
-import { map, ModelType } from '../models';
+import { IntlShape } from "react-intl";
+import { getCodeListByTableName } from "../codeLists/getCodeLists";
+import { TableInterface } from "../interfaces/table.interface";
+import { map, mapSFFModel, ModelType, predefinedCodeLists, SFFModelType } from "../models";
+import { FieldType } from "../models/Base";
 
-type Operation = 'import' | 'export';
+type Operation = "import" | "export";
 
 const validatorErrors = new Set<string>();
 const validatorWarnings = new Set<string>();
 
-/* global console */
-export function validate(
+export async function validate(
   tableData: TableInterface[],
-  operation: Operation = 'export'
-): {
+  operation: Operation = "export",
+  intl: IntlShape
+): Promise<{
   errors: string[];
   warnings: string[];
-} {
+}> {
   validatorWarnings.clear();
   validatorErrors.clear();
 
-  validateIfEmptyFile(tableData);
+  validateIfEmptyFile(tableData, intl);
 
-  validateIfIdIsValidUrl(tableData, operation);
+  validateIfIdIsValidUrl(tableData, operation, intl);
 
   // eslint-disable-next-line no-param-reassign
   tableData = removeEmptyRows(tableData);
 
   tableData.forEach((item) => {
-    validateTypeProp(item);
+    validateTypeProp(item, intl);
   });
 
-  validateRecords(tableData, operation);
+  await validateRecords(tableData, operation, intl);
 
   return {
     errors: Array.from(validatorErrors),
@@ -36,17 +39,25 @@ export function validate(
   };
 }
 
-function validateRecords(tableData: TableInterface[], operation: Operation) {
+async function validateRecords(tableData: TableInterface[], operation: Operation, intl: IntlShape) {
   // Records to keep track of unique values
   const uniqueRecords: Record<string, Set<any>> = {};
 
-  validateLinkedFields(tableData, operation);
+  await validateLinkedFields(tableData, operation, intl);
 
   for (const data of tableData) {
-    if (validateTypeProp(data)) return;
-    const tableName = data['@type'].split(':')[1];
-    const id = data['@id'];
-    const cid = new map[tableName as ModelType](); // Initialize the schema for the table
+    if (validateTypeProp(data, intl)) return;
+    const tableName = data["@type"].split(":")[1];
+    const id = data["@id"];
+
+    // Initialize the schema for the table
+    let cid;
+    // Check if type is part of the SFF module
+    if (mapSFFModel[tableName as SFFModelType]) {
+      cid = new mapSFFModel[tableName as SFFModelType]();
+    } else {
+      cid = new map[tableName as ModelType]();
+    }
 
     // Initialize a record for this table if not already present
     if (!uniqueRecords[tableName]) {
@@ -54,58 +65,131 @@ function validateRecords(tableData: TableInterface[], operation: Operation) {
     }
 
     //check if required fields are present
-    for (const field of cid.getFields()) {
-      if (field.required && !Object.keys(data).includes(field.name)) {
-        if (field.name === 'i72:value' || field.name === 'org:hasLegalName') {
-          if (Object.keys(data).includes('value') || Object.keys(data).includes('hasLegalName')) {
-            continue;
-          }
-        }
-        if (operation === 'import' && field.name !== '@id') {
+    for (const field of cid.getAllFields()) {
+      if (
+        field.required &&
+        !Object.keys(data)
+          .map((d) => (d.indexOf(":") !== -1 ? d.split(":")[1] : d))
+          .includes(field.name.indexOf(":") !== -1 ? field.name.split(":")[1] : field.name)
+      ) {
+        if (operation === "import" && field.name !== "@id") {
           validatorWarnings.add(
-            `Required field <b>${field.name}</b> is missing on table <b>${tableName}</b>`
+            intl.formatMessage(
+              {
+                id: "validation.messages.missingRequiredField",
+                defaultMessage:
+                  "Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
+              },
+              {
+                fieldName: field.displayName || field.name,
+                tableName,
+                b: (str) => `<b>${str}</b>`,
+              }
+            )
           );
         } else {
           validatorErrors.add(
-            `Required field <b>${field.name}</b> is missing on table <b>${tableName}</b>`
+            intl.formatMessage(
+              {
+                id: "validation.messages.missingRequiredField",
+                defaultMessage:
+                  "Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
+              },
+              {
+                fieldName: field.displayName || field.name,
+                tableName,
+                b: (str) => `<b>${str}</b>`,
+              }
+            )
           );
         }
       }
     }
 
-    for (const field of cid.getFields()) {
+    for (const field of cid.getAllFields()) {
       if (field.semiRequired) {
-        if (!Object.keys(data).includes(field.name)) {
+        if (
+          !Object.keys(data)
+            .map((d) => (d.indexOf(":") !== -1 ? d.split(":")[1] : d))
+            .includes(field.name.indexOf(":") !== -1 ? field.name.split(":")[1] : field.name)
+        ) {
           validatorWarnings.add(
-            `Required field <b>${field.name}</b> is missing on table <b>${tableName}</b>`
+            intl.formatMessage(
+              {
+                id: "validation.messages.missingRequiredField",
+                defaultMessage:
+                  "Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
+              },
+              {
+                fieldName: field.displayName || field.name,
+                tableName,
+                b: (str) => `<b>${str}</b>`,
+              }
+            )
           );
         }
         // @ts-ignore
         if (data[field.name]?.length === 0) {
-          validatorWarnings.add(`Field <b>${field.name}</b> is empty on table <b>${tableName}</b>`);
+          validatorWarnings.add(
+            intl.formatMessage(
+              {
+                id: "validation.messages.emptyField",
+                defaultMessage: "Field <b>{fieldName}</b> is empty on table <b>{tableName}</b>",
+              },
+              {
+                fieldName: field.displayName || field.name,
+                tableName,
+                b: (str) => `<b>${str}</b>`,
+              }
+            )
+          );
         }
       }
     }
 
     // check if notNull fields are not null
-    for (const field of cid.getFields()) {
-      if (field.notNull && Object.keys(data)?.length === 0) {
-        validatorErrors.add(
-          `Field <b>${field.name}</b> is null or empty on table <b>${tableName}</b>`
-        );
+    for (const field of cid.getAllFields()) {
+      if (
+        field.notNull &&
+        operation === "export" &&
+        ((!data[field.name] && !data[field.name.split(":")[1]]) ||
+          isFieldValueNullOrEmpty(data[field.name] || data[field.name.split(":")[1]]))
+      ) {
+        const msg = intl
+          .formatMessage(
+            {
+              id: "validation.messages.nullOrEmptyField",
+              defaultMessage:
+                "Field <b>{fieldName}</b> is null or empty on table <b>{tableName}</b>",
+            },
+            {
+              fieldName: field.displayName || field.name,
+              tableName,
+              b: (str) => `<b>${str}</b>`,
+            }
+          )
+          .toString();
+        validatorErrors.add(msg);
       }
     }
 
+    // eslint-disable-next-line prefer-const
     for (let [fieldName, fieldValue] of Object.entries(data)) {
-      if (fieldName === '@context' || fieldName === '@type') continue;
-      if (fieldName === 'value') {
-        fieldName = 'i72:value';
-      }
-      if (fieldName === 'hasLegalName') {
-        fieldName = 'org:hasLegalName';
+      if (fieldName === "@context" || fieldName === "@type") continue;
+      const tableFields = cid.getAllFields().map((field) => field.name);
+      const fieldDisplayName = cid.getFieldByName(fieldName)?.displayName || fieldName;
+
+      for (const field of tableFields) {
+        if (field.indexOf(":") !== -1) {
+          const splitField = field.split(":");
+          if (splitField[1] === fieldName) {
+            fieldName = field;
+            break;
+          }
+        }
       }
 
-      let fieldProps: any = null;
+      let fieldProps: FieldType | null = null;
       try {
         fieldProps = cid.getFieldByName(fieldName);
       } catch (_) {
@@ -121,17 +205,42 @@ function validateRecords(tableData: TableInterface[], operation: Operation) {
         const uniqueValues = new Set(fieldValue);
         if (uniqueValues.size !== fieldValue.length) {
           validatorWarnings.add(
-            `Duplicate values in field <b>${fieldName}</b> on table <b>${tableName}</b>`
+            intl.formatMessage(
+              {
+                id: "validation.messages.duplicateFieldValues",
+                defaultMessage:
+                  "Duplicate values in field <b>{fieldName}</b> on table <b>{tableName}</b}",
+              },
+              {
+                fieldName: fieldDisplayName,
+                tableName,
+                b: (str) => `<b>${str}</b>`,
+              }
+            )
           );
         }
       }
 
-      if (fieldProps.type !== 'i72') {
+      if (fieldProps.type !== "object") {
         // Validate unique fields
         if (fieldProps?.unique) {
-          if (!validateUnique(tableName, fieldName, fieldValue, uniqueRecords, id)) {
-            const msg = `Duplicate value for unique field <b>${fieldName}</b>: <b>${fieldValue}</b> in table <b>${tableName}</b>`;
-            if (fieldName !== '@id') {
+          if (!validateUnique(tableName, fieldName, fieldValue, uniqueRecords, id, intl)) {
+            const msg = intl
+              .formatMessage(
+                {
+                  id: "validation.messages.duplicateUniqueFieldValue",
+                  defaultMessage:
+                    "Duplicate value for unique field <b>{fieldName}</b>: <b>{fieldValue}</b> in table <b>{tableName}</b}",
+                },
+                {
+                  fieldName: fieldDisplayName,
+                  fieldValue: fieldValue as string,
+                  tableName,
+                  b: (str) => `<b>${str}</b>`,
+                }
+              )
+              .toString();
+            if (fieldName !== "@id") {
               validatorWarnings.add(msg);
             } else {
               validatorErrors.add(msg);
@@ -140,18 +249,78 @@ function validateRecords(tableData: TableInterface[], operation: Operation) {
         }
 
         if (fieldProps?.notNull) {
-          if (fieldValue === '' || !fieldValue) {
+          if (fieldValue === "" || !fieldValue) {
             validatorWarnings.add(
-              `Field <b>${fieldName}</b> on table <b>${tableName}</b> is null or empty.`
+              intl.formatMessage(
+                {
+                  id: "validation.messages.warning.nullOrEmptyField",
+                  defaultMessage:
+                    "Field <b>{fieldName}</b> on table <b>{tableName}</b> is null or empty.",
+                },
+                {
+                  fieldName: fieldDisplayName,
+                  tableName,
+                  b: (str) => `<b>${str}</b>`,
+                }
+              )
             );
           }
         }
 
         if (fieldProps?.required) {
-          if (fieldValue === '' || !fieldValue) {
+          if (fieldValue === "" || !fieldValue) {
             validatorWarnings.add(
-              `Field <b>${fieldName}</b> on table <b>${tableName}</b> is required.`
+              intl.formatMessage(
+                {
+                  id: "validation.messages.warning.missingRequiredField",
+                  defaultMessage:
+                    "Field <b>{fieldName}</b> on table <b>{tableName}</b> is required.",
+                },
+                {
+                  fieldName: fieldDisplayName,
+                  tableName,
+                  b: (str) => `<b>${str}</b>`,
+                }
+              )
             );
+          }
+        }
+
+        if (fieldProps?.type === "select") {
+          if (fieldProps.selectOptions || fieldProps.getOptionsAsync) {
+            let shouldWarn = false;
+            if (fieldProps.getOptionsAsync) {
+              const options = await fieldProps.getOptionsAsync();
+              if (
+                !options.find(
+                  (op) => op.id === (Array.isArray(fieldValue) ? fieldValue[0] : fieldValue)
+                )
+              ) {
+                shouldWarn = true;
+              }
+            } else if (
+              !fieldProps.selectOptions?.find(
+                (op) => op.id === (Array.isArray(fieldValue) ? fieldValue[0] : fieldValue)
+              )
+            ) {
+              shouldWarn = true;
+            }
+            if (shouldWarn) {
+              validatorWarnings.add(
+                intl.formatMessage(
+                  {
+                    id: "validation.messages.warning.invalidSelectField",
+                    defaultMessage:
+                      "Field <b>{fieldName}</b> on table <b>{tableName}</b> has an invalid value.",
+                  },
+                  {
+                    fieldName: fieldDisplayName,
+                    tableName,
+                    b: (str) => `<b>${str}</b>`,
+                  }
+                )
+              );
+            }
           }
         }
       }
@@ -164,7 +333,8 @@ function validateUnique(
   fieldName: string,
   fieldValue: any,
   uniqueRecords: Record<string, Set<any>>,
-  id: string
+  id: string,
+  intl: IntlShape
 ): boolean {
   // Unique key for this field in the format "tableName.fieldName"
   if (!id) return false;
@@ -174,7 +344,18 @@ function validateUnique(
     urlObject = new URL(id);
   } catch (error) {
     validatorErrors.add(
-      `Invalid URL format: <b>${id}</b> for <b>@id</b> on table <b>${tableName}</b>`
+      intl.formatMessage(
+        {
+          id: "validation.messages.invalidIdFormat",
+          defaultMessage:
+            "Invalid URL format: <b>{id}</b> for <b>@id</b> on table <b>{tableName}</b>",
+        },
+        {
+          id,
+          tableName,
+          b: (str) => `<b>${str}</b>`,
+        }
+      )
     );
     return false;
   }
@@ -200,43 +381,86 @@ function validateUnique(
   }
 }
 
-function validateTypeProp(data: any): boolean {
-  if (!('@type' in data)) {
-    validatorErrors.add('<b>@type</b> must be present in the data');
+function validateTypeProp(data: any, intl: IntlShape): boolean {
+  if (!("@type" in data)) {
+    validatorErrors.add(
+      intl.formatMessage({
+        id: "validation.messages.missingTypeProperty",
+        defaultMessage: "<b>@type</b> must be present in the data",
+      })
+    );
     return true;
   }
-  if (data['@type'].length === 0) {
-    validatorErrors.add('<b>@type</b> cannot be empty');
+  if (data["@type"].length === 0) {
+    validatorErrors.add(
+      intl.formatMessage({
+        id: "validation.messages.emptyTypeProperty",
+        defaultMessage: "<b>@type</b> cannot be empty",
+      })
+    );
     return true;
   }
   try {
-    if (data['@type']?.split(':')[1].length === 0) {
-      validatorErrors.add('<b>@type</b> must follow the format <b>cids:tableName</b>');
+    if (data["@type"]?.split(":")[1].length === 0) {
+      validatorErrors.add(
+        intl.formatMessage({
+          id: "validation.messages.invalidTypeProperty",
+          defaultMessage: "<b>@type</b> must follow the format <b>cids:tableName</b>",
+        })
+      );
       return true;
     }
   } catch (error) {
-    validatorErrors.add('<b>@type</b> must follow the format <b>cids:tableName</b>');
+    validatorErrors.add(
+      intl.formatMessage({
+        id: "validation.messages.invalidTypeProperty",
+        defaultMessage: "<b>@type</b> must follow the format <b>cids:tableName</b>",
+      })
+    );
     return true;
   }
-  const tableName = (data['@type'] as string)?.split(':')[1];
-  if (!map[tableName as ModelType]) {
+  const tableName = (data["@type"] as string)?.split(":")[1];
+  if (!map[tableName as ModelType] && !mapSFFModel[tableName as SFFModelType]) {
     validatorWarnings.add(
-      `Table <b>${tableName}</b> is not recognized in the basic tier and will be ignored.`
+      intl.formatMessage(
+        {
+          id: "validation.messages.unrecognizedTypeProperty",
+          defaultMessage:
+            "Table <b>{tableName}</b> is not recognized in the basic tier and will be ignored.",
+        },
+        {
+          tableName,
+          b: (str) => `<b>${str}</b>`,
+        }
+      )
     );
     return true;
   }
   return false;
 }
 
-function validateLinkedFields(tableData: TableInterface[], operation: Operation) {
+async function validateLinkedFields(
+  tableData: TableInterface[],
+  operation: Operation,
+  intl: IntlShape
+) {
   for (const data of tableData) {
-    if (validateTypeProp(data)) return;
-    const tableName = data['@type'].split(':')[1];
-    const cid = new map[tableName as ModelType](); // Initialize the schema for the table
+    if (validateTypeProp(data, intl)) return;
+    const tableName = data["@type"].split(":")[1];
+
+    // Initialize the schema for the table
+    let cid;
+    // Check if type is part of the SFF module
+    if (mapSFFModel[tableName as SFFModelType]) {
+      cid = new mapSFFModel[tableName as SFFModelType]();
+    } else {
+      cid = new map[tableName as ModelType]();
+    }
+
     // for each field that has type link, check if all linked ids exists
-    const fields = cid.getFields();
-    const linkedFields = fields.filter((field) => field.type === 'link');
-    linkedFields.forEach((field) => {
+    const fields = cid.getAllFields();
+    const linkedFields = fields.filter((field) => field.type === "link");
+    linkedFields.forEach(async (field) => {
       const fieldName = field.name;
       if (!data[fieldName]) {
         data[fieldName] = [];
@@ -244,18 +468,31 @@ function validateLinkedFields(tableData: TableInterface[], operation: Operation)
 
       let isString = false;
       if (!Array.isArray(data[fieldName])) {
-        if (typeof data[fieldName] === 'string') {
+        if (typeof data[fieldName] === "string") {
           isString = true;
         }
         data[fieldName] =
-          typeof data[fieldName] === 'string' && data[fieldName].length > 0
-            ? [...data[fieldName].split(', ')]
+          typeof data[fieldName] === "string" && data[fieldName].length > 0
+            ? [...data[fieldName].split(", ")]
             : [];
       }
 
       if (data[fieldName].length === 0) {
-        const msg = `${tableName} <b>${data['org:hasLegalName'] || data['hasLegalName'] || data['hasName']}</b> has no ${fieldName.substring(3)}`;
-        if (field.required && operation === 'export') {
+        const msg = intl
+          .formatMessage(
+            {
+              id: "validation.messages.missingLinkedField",
+              defaultMessage: "{tableName} <b>{name}</b> has no {fieldName}",
+            },
+            {
+              tableName,
+              name: (data["org:hasLegalName"] || data["hasLegalName"] || data["hasName"]) as string,
+              fieldName: fieldName.substring(3),
+              b: (str) => `<b>${str}</b>`,
+            }
+          )
+          .toString();
+        if (field.required && operation === "export") {
           validatorErrors.add(msg);
         } else if (field.required || field.semiRequired) {
           validatorWarnings.add(msg);
@@ -263,77 +500,174 @@ function validateLinkedFields(tableData: TableInterface[], operation: Operation)
       }
 
       if (isString && data[fieldName].length > 1) {
-        if (operation === 'import') {
+        if (operation === "import") {
           validatorWarnings.add(
-            `Multiple values found in field <b>${fieldName}</b> at id ${data['@id']} on table <b>${tableName}</b>. Only the first value ${data[fieldName][0]} will be considered`
+            intl.formatMessage(
+              {
+                id: "validation.messages.multipleValuesWarning",
+                defaultMessage:
+                  "Multiple values found in field <b>{fieldName}</b> at id {dataId} on table <b>{tableName}</b>. Only the first value {firstValue} will be considered",
+              },
+              {
+                fieldName,
+                dataId: data["@id"],
+                tableName,
+                firstValue: data[fieldName][0],
+                b: (str) => `<b>${str}</b>`,
+              }
+            )
           );
         } else {
           validatorErrors.add(
-            `Multiple values found in field <b>${fieldName}</b> at id ${data['@id']} on table <b>${tableName}</b>.`
+            intl.formatMessage(
+              {
+                id: "validation.messages.multipleValues",
+                defaultMessage:
+                  "Multiple values found in field <b>{fieldName}</b> at id {dataId} on table <b>{tableName}</b>.",
+              },
+              {
+                fieldName,
+                dataId: data["@id"],
+                tableName,
+                b: (str) => `<b>${str}</b>`,
+              }
+            )
           );
         }
         data[fieldName] = [data[fieldName][0]];
       }
 
-      const linkedTable = field.link.className;
+      const linkedTable = field.link?.table.className;
       const linkedIds: string[] = [];
 
+      if (predefinedCodeLists.includes(linkedTable)) {
+        const codeList = await getCodeListByTableName(linkedTable);
+        if (codeList) {
+          codeList.forEach((item) => {
+            linkedIds.push(item["@id"]);
+          });
+        }
+      }
+
       for (const linkedData of tableData) {
-        if (validateTypeProp(linkedData)) return;
-        const linkedTableName = linkedData['@type'].split(':')[1];
+        if (validateTypeProp(linkedData, intl)) return;
+        const linkedTableName = linkedData["@type"].split(":")[1];
         if (linkedTableName === linkedTable) {
-          linkedIds.push(linkedData['@id']);
+          linkedIds.push(linkedData["@id"]);
         }
       }
 
       data[fieldName].forEach((item) => {
         if (!linkedIds.includes(item)) {
           validatorWarnings.add(
-            `${tableName} <b>${data['org:hasLegalName'] || data['hasLegalName'] || data['hasName']}</b> linked on ${fieldName} to item <b>${item}</b> that does not exist in the ${linkedTable} table`
+            intl.formatMessage(
+              {
+                id: "validation.messages.linkedFieldNotFound",
+                defaultMessage:
+                  "{tableName} <b>{name}</b> linked on {fieldName} to item <b>{item}</b> that does not exist in the {linkedTable} table",
+              },
+              {
+                tableName,
+                name: data["org:hasLegalName"] || data["hasLegalName"] || data["hasName"],
+                fieldName,
+                item,
+                linkedTable,
+                b: (str: string) => `<b>${str}</b>`,
+              }
+            ) as string
           );
         }
       });
 
-      if (isString && operation === 'export') {
-        data[fieldName] = data[fieldName][0];
+      if ((isString || field.representedType === "string") && operation === "export") {
+        data[fieldName] = data[fieldName].length > 0 ? data[fieldName][0] : "";
       }
     });
   }
 }
 
 function removeEmptyRows(tableData: TableInterface[]) {
-  return tableData.filter((item) => item['@id'].length > 0);
+  return tableData.filter((item) => item["@id"].length > 0);
 }
 
-function validateIfIdIsValidUrl(tableData: TableInterface[], operation: Operation) {
+function validateIfIdIsValidUrl(
+  tableData: TableInterface[],
+  operation: Operation,
+  intl: IntlShape
+) {
   tableData.map((item) => {
     let tableName;
     try {
-      tableName = item['@type'].split(':')[1];
+      tableName = item["@type"].split(":")[1];
     } catch (error) {
-      validatorErrors.add('<b>@type</b> must be present in the data');
+      validatorErrors.add(
+        intl.formatMessage({
+          id: "validation.messages.missingTypeProperty",
+          defaultMessage: "<b>@type</b> must be present in the data",
+        })
+      );
     }
 
-    const id = item['@id'];
+    const id = item["@id"];
     try {
-      new URL(item['@id']);
+      new URL(item["@id"]);
     } catch (error) {
-      if (operation === 'import') {
+      if (operation === "import") {
         validatorWarnings.add(
-          `Invalid URL format: <b>${id}</b> for <b>@id</b> on table <b>${tableName}</b>`
+          intl.formatMessage(
+            {
+              id: "validation.messages.invalidIdFormat",
+              defaultMessage:
+                "Invalid URL format: <b>{id}</b> for <b>@id</b> on table <b>{tableName}</b>",
+            },
+            {
+              id,
+              tableName,
+              b: (str) => `<b>${str}</b>`,
+            }
+          )
         );
         return;
       }
       validatorErrors.add(
-        `Invalid URL format: <b>${id}</b> for <b>@id</b> on table <b>${tableName}</b>`
+        intl.formatMessage(
+          {
+            id: "validation.messages.invalidIdFormat",
+            defaultMessage:
+              "Invalid URL format: <b>{id}</b> for <b>@id</b> on table <b>{tableName}</b>",
+          },
+          {
+            id,
+            tableName,
+            b: (str) => `<b>${str}</b>`,
+          }
+        )
       );
       return;
     }
   });
 }
 
-function validateIfEmptyFile(tableData: TableInterface[]) {
+function validateIfEmptyFile(tableData: TableInterface[], intl: IntlShape) {
   if (!Array.isArray(tableData) || tableData.length === 0) {
-    validatorErrors.add('Table data is empty or not an array');
+    validatorErrors.add(
+      intl.formatMessage({
+        id: "validation.messages.dataIsEmptyOrNotArray",
+        defaultMessage: "Table data is empty or not an array",
+      })
+    );
   }
+}
+
+function isFieldValueNullOrEmpty(value: any) {
+  if (typeof value === "string") {
+    return value.trim().length === 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length === 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length === 0;
+  }
+  return value === null || value === undefined;
 }

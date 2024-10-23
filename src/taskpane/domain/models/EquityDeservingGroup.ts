@@ -1,7 +1,8 @@
 import { Base } from "./Base";
+import { Characteristic } from "./Characteristic";
 
-export class Theme extends Base {
-  static className = "Theme";
+export class EquityDeservingGroup extends Base {
+  static className = "EquityDeservingGroup";
 
   constructor() {
     super();
@@ -11,15 +12,6 @@ export class Theme extends Base {
         type: "string",
         representedType: "string",
         primary: true,
-        unique: false,
-        notNull: true,
-        required: false,
-        semiRequired: true,
-      },
-      {
-        name: "hasName",
-        type: "string",
-        representedType: "string",
         unique: false,
         notNull: true,
         required: false,
@@ -36,21 +28,21 @@ export class Theme extends Base {
         semiRequired: false,
       },
       {
-        name: "hasCode",
-        type: "string",
-        representedType: "array",
-        defaultValue: [],
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: false,
-      },
-      {
-        name: "relatesTo",
+        name: "hasCharacteristic",
         type: "link",
         representedType: "array",
         defaultValue: [],
-        link: { table: Theme, field: "relatesTo" },
+        link: { table: Characteristic, field: "forEquityDeservingGroup" },
+        unique: false,
+        notNull: true,
+        required: false,
+        semiRequired: true,
+      },
+      {
+        name: "isDefined",
+        type: "boolean",
+        representedType: "boolean",
+        defaultValue: false,
         unique: false,
         notNull: false,
         required: false,

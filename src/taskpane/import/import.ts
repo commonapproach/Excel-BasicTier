@@ -1,23 +1,51 @@
-import { TableInterface } from '../domain/interfaces/table.interface';
-import { IndicatorReport, ModelType, Organization, map } from '../domain/models';
-import { validate } from '../domain/validation/validator';
-import { createSheetsAndTables } from '../taskpane';
+import { IntlShape } from "react-intl";
+import { TableInterface } from "../domain/interfaces/table.interface";
+import {
+  ModelType,
+  SFFModelType,
+  createInstance,
+  ignoredFields,
+  map,
+  mapSFFModel,
+} from "../domain/models";
+import { FieldType } from "../domain/models/Base";
+import { validate } from "../domain/validation/validator";
+import { createSFFModuleSheetsAndTables, createSheetsAndTables } from "../taskpane";
 
 /* global Excel console */
 export async function importData(
+  intl: IntlShape,
   jsonData: any,
   setDialogContent: (header: string, content: string, nextCallBack?: Function) => void,
   setIsImporting: (value: boolean) => void
 ) {
   await Excel.run(async (context) => {
     if (validateIfEmptyFile(jsonData)) {
-      setDialogContent('Error!', 'Table data is empty or not an array');
+      setDialogContent(
+        `${intl.formatMessage({
+          id: "generics.error",
+          defaultMessage: "Error",
+        })}!`,
+        intl.formatMessage({
+          id: "import.messages.error.emptyOrNotArray",
+          defaultMessage: "Table data is empty or not an array",
+        })
+      );
       setIsImporting(false);
       return;
     }
 
     if (!doAllRecordsHaveId(jsonData)) {
-      setDialogContent('Error!', 'All records must have an <b>@id</b> property.');
+      setDialogContent(
+        `${intl.formatMessage({
+          id: "generics.error",
+          defaultMessage: "Error",
+        })}!`,
+        intl.formatMessage({
+          id: "import.messages.error.missingId",
+          defaultMessage: "All records must have an <b>@id</b> property.",
+        })
+      );
       setIsImporting(false);
       return;
     }
@@ -26,64 +54,133 @@ export async function importData(
     // eslint-disable-next-line no-param-reassign
     jsonData = removeDuplicatedLinks(jsonData);
 
-    let allErrors = '';
-    let allWarnings = '';
+    let allErrors = "";
+    let allWarnings = "";
 
     // Check if json data is a valid json array
+    if (!Array.isArray(jsonData)) {
+      setDialogContent(
+        `${intl.formatMessage({
+          id: "generics.error",
+          defaultMessage: "Error",
+        })}!`,
+        intl.formatMessage({
+          id: "import.messages.error.invalidJson",
+          defaultMessage: "Invalid JSON data, please check the data and try again.",
+        })
+      );
+      return;
+    }
+
+    // Transform object field if it's in the wrong format
+    // eslint-disable-next-line no-param-reassign
+    jsonData = transformObjectFieldIfWrongFormat(jsonData);
+
     // Validate JSON
-    let { errors, warnings } = validate(jsonData, 'import');
+    let { errors, warnings } = await validate(jsonData, "import", intl);
 
-    warnings = [...warnings, ...warnIfUnrecognizedFieldsWillBeIgnored(jsonData)];
+    warnings = [...warnings, ...warnIfUnrecognizedFieldsWillBeIgnored(jsonData, intl)];
 
-    allErrors = errors.join('<hr/>');
-    allWarnings = warnings.join('<hr/>');
+    allErrors = errors.join("<hr/>");
+    allWarnings = warnings.join("<hr/>");
 
     if (allErrors.length > 0) {
-      setDialogContent('Error!', allErrors);
+      setDialogContent(
+        `${intl.formatMessage({
+          id: "generics.error",
+          defaultMessage: "Error",
+        })}!`,
+        allErrors
+      );
       return;
     }
 
     if (allWarnings.length > 0) {
-      setDialogContent('Warning!', allWarnings, () => {
-        setDialogContent('Warning!', '<p>Do you want to import anyway?</p>', async () => {
-          await importFileData(context, jsonData, setDialogContent, setIsImporting);
-        });
-      });
+      setDialogContent(
+        `${intl.formatMessage({
+          id: "generics.warning",
+          defaultMessage: "Warning",
+        })}!`,
+        allWarnings,
+        () => {
+          setDialogContent(
+            `${intl.formatMessage({
+              id: "generics.warning",
+              defaultMessage: "Warning",
+            })}!`,
+            intl.formatMessage({
+              id: "import.messages.warning.continue",
+              defaultMessage: "<p>Do you want to import anyway?</p>",
+            }),
+            async () => {
+              await importFileData(intl, context, jsonData, setDialogContent, setIsImporting);
+            }
+          );
+        }
+      );
     } else {
-      await importFileData(context, jsonData, setDialogContent, setIsImporting);
+      await importFileData(intl, context, jsonData, setDialogContent, setIsImporting);
     }
   });
 }
 
 async function importFileData(
+  intl: IntlShape,
   context: Excel.RequestContext,
   jsonData: any,
   setDialogContent: any,
   setIsImporting: (v: boolean) => void
 ) {
-  setDialogContent('Wait a moment...', 'Importing data...');
+  setDialogContent(
+    intl.formatMessage({
+      id: "import.messages.wait",
+      defaultMessage: "Wait a moment...",
+    }),
+    intl.formatMessage({
+      id: "import.messages.importing",
+      defaultMessage: "Importing data...",
+    })
+  );
   setIsImporting(true);
   try {
     // Ignore types/classes that are not recognized
+    const fullMap = { ...map, ...mapSFFModel };
     const filteredItems = Array.isArray(jsonData)
-      ? jsonData.filter((data: any) => Object.keys(map).includes(data['@type'].split(':')[1]))
-      : [];
-    await importByData(context, filteredItems);
+      ? jsonData.filter((data: any) => Object.keys(fullMap).includes(data["@type"].split(":")[1]))
+      : jsonData;
+    await importByData(intl, context, filteredItems);
   } catch (error: any) {
+    console.log("error", error);
     setIsImporting(false);
-    setDialogContent('Error!', error.message || 'Something went wrong');
+    setDialogContent(
+      `${intl.formatMessage({
+        id: "generics.error",
+        defaultMessage: "Error",
+      })}!`,
+      error.message ||
+        intl.formatMessage({ id: "generics.error.message", defaultMessage: "Something went wrong" })
+    );
     return;
   }
-  setDialogContent('Success!', 'Your data has been successfully imported.');
+  setDialogContent(
+    intl.formatMessage({
+      id: "generics.success",
+      defaultMessage: "Success",
+    }),
+    intl.formatMessage({
+      id: "import.messages.success",
+      defaultMessage: "Your data has been successfully imported.",
+    })
+  );
   setIsImporting(false);
 }
 
-async function importByData(context: Excel.RequestContext, jsonData: any) {
+async function importByData(intl: IntlShape, context: Excel.RequestContext, jsonData: any) {
   // Set active worksheet Waiting sheet
   const randomValue = Math.random().toString(36).substring(7);
   const waitingSheetName = `Waiting${randomValue}`;
   const worksheets = context.workbook.worksheets;
-  worksheets.load('items');
+  worksheets.load("items");
   await context.sync();
   let waitingSheetExists = false;
   for (const worksheet of worksheets.items) {
@@ -99,12 +196,33 @@ async function importByData(context: Excel.RequestContext, jsonData: any) {
   await context.sync();
 
   // Write message to A1 warning users to do not edit the workbook while importing
-  const range = context.workbook.worksheets.getItem(waitingSheetName).getRange('A1');
-  range.values = [['Do not edit the workbook while importing!']];
+  const range = context.workbook.worksheets.getItem(waitingSheetName).getRange("A1");
+  range.values = [
+    [
+      intl.formatMessage({
+        id: "import.messages.workbook.waiting",
+        defaultMessage: "Do not edit this workbook while importing data.",
+      }),
+    ],
+  ];
   await context.sync();
 
   // Create Tables if they don't exist
   await createSheetsAndTables();
+
+  // Check if data has any class from SFF module
+  for (const data of jsonData) {
+    if (
+      !data["@type"] ||
+      (!Object.keys(map).includes(data["@type"].split(":")[1]) &&
+        !Object.keys(mapSFFModel).includes(data["@type"].split(":")[1]))
+    ) {
+      continue;
+    } else if (Object.keys(mapSFFModel).includes(data["@type"].split(":")[1])) {
+      await createSFFModuleSheetsAndTables();
+      break;
+    }
+  }
 
   // Write Simple Records to Tables
   await writeTable(context, jsonData);
@@ -113,11 +231,11 @@ async function importByData(context: Excel.RequestContext, jsonData: any) {
   await writeTableLinked(context, jsonData);
 
   // Resize the tables
-  worksheets.load('items');
+  worksheets.load("items");
   await context.sync();
   for (const worksheet of worksheets.items) {
     const tables = worksheet.tables;
-    tables.load('items');
+    tables.load("items");
     await context.sync();
     for (const table of tables.items) {
       table.getRange().format.autofitColumns();
@@ -137,66 +255,89 @@ async function writeTable(
   tableData: TableInterface[]
 ): Promise<void> {
   for (const data of tableData) {
-    const tableName = data['@type'].split(':')[1];
-    const recordId = data['@id'];
+    const tableName = data["@type"].split(":")[1];
+    const recordId = data["@id"];
     const worksheet = context.workbook.worksheets.getItem(tableName);
-    worksheet.load('tables');
+    worksheet.load("tables");
     context.trackedObjects.add(worksheet);
     await context.sync();
     const table = worksheet.tables.getItem(tableName);
     const tableRange = table.getRange();
     const tableHeaderRange = table.getHeaderRowRange();
-    tableRange.load('values');
-    tableHeaderRange.load('values');
+    tableRange.load("values");
+    tableHeaderRange.load("values");
     context.trackedObjects.add(tableRange);
     context.trackedObjects.add(tableHeaderRange);
     await context.sync();
-    const idColumnIndex = tableHeaderRange.values[0].indexOf('@id');
+    const idColumnIndex = tableHeaderRange.values[0].indexOf("@id");
     const idColumn = tableRange.getColumn(idColumnIndex);
-    idColumn.load('values');
+    idColumn.load("values");
     context.trackedObjects.add(idColumn);
     await context.sync();
     const idColumnValues = idColumn.values;
 
     // Create the record
     let record: { [key: string]: unknown } = {};
-    Object.entries(data).forEach(([key, value]) => {
-      let fieldName = key;
-      if (
-        !checkIfFieldIsRecognized(tableName, fieldName) &&
-        fieldName !== '@type' &&
-        fieldName !== '@context' &&
-        fieldName !== 'value' &&
-        fieldName !== 'hasLegalName'
-      ) {
+    Object.entries(data).forEach(async ([key, value]) => {
+      if (key !== "@type" && key !== "@context" && !checkIfFieldIsRecognized(tableName, key)) {
         return;
       }
-      if (fieldName === 'value') {
-        fieldName = 'i72:value';
-      }
-      if (fieldName === 'hasLegalName') {
-        fieldName = 'org:hasLegalName';
-      }
-      const cid = new map[tableName as ModelType]();
-      if (
-        fieldName !== '@type' &&
-        fieldName !== '@context' &&
-        cid.getFieldByName(fieldName)?.type !== 'link' &&
-        cid.getFieldByName(fieldName)?.type
-      ) {
-        if (cid.getFieldByName(fieldName)?.type === 'i72' || fieldName === 'value') {
-          record[fieldName] =
-            // @ts-ignore
-            value?.numerical_value?.toString() || value?.['i72:numerical_value']?.toString();
 
-          // Extract the unit_of_measure value
-          const unit_of_measure =
-            (value as any)?.['i72:unit_of_measure'] || (value as any)?.['unit_of_measure'];
-          if (unit_of_measure) {
-            record['i72:unit_of_measure'] = unit_of_measure;
-          }
+      let cid;
+      if (Object.keys(map).includes(tableName)) {
+        cid = new map[tableName as ModelType]();
+      } else {
+        cid = new mapSFFModel[tableName as SFFModelType]();
+      }
+
+      for (const field of cid.getAllFields()) {
+        if (field.name.includes(":") && field.name.split(":")[1] === key) {
+          // eslint-disable-next-line no-param-reassign
+          key = field.name;
+          break;
+        }
+      }
+
+      if (cid.getFieldByName(key)?.type !== "link" && cid.getFieldByName(key)?.type) {
+        if (cid.getFieldByName(key)?.type === "object") {
+          record = findLastFieldValueForNestedFields(data, cid.getFieldByName(key), record);
         } else {
-          record[fieldName] = value;
+          const field = cid.getFieldByName(key);
+          const fieldName = field.displayName || field.name;
+          let newValue: any = value;
+          if (newValue && field.type === "select") {
+            let options = [];
+            if (field.getOptionsAsync) {
+              options = await field.getOptionsAsync();
+            } else {
+              options = field.selectOptions ?? [];
+            }
+            if (
+              options.find((opt) => opt.id === (Array.isArray(newValue) ? newValue[0] : newValue))
+            ) {
+              const optionField = options.find(
+                (opt) => opt.id === (Array.isArray(newValue) ? newValue[0] : newValue)
+              );
+              if (optionField) {
+                newValue = optionField.name;
+              } else {
+                newValue = null;
+              }
+            } else {
+              newValue = null;
+            }
+          }
+          if (field.type === "boolean") {
+            if (newValue && (newValue === true || (newValue as string).toLowerCase() === "true")) {
+              newValue = true;
+            } else {
+              newValue = false;
+            }
+          }
+          if (field.type !== "boolean" && field.type !== "select" && newValue) {
+            newValue = newValue.toString();
+          }
+          record[fieldName] = newValue;
         }
       }
     });
@@ -211,10 +352,10 @@ async function writeTable(
     } else {
       // Add the record
       // Get first row with empty id
-      const emptyIdIndex = idColumnValue.indexOf('');
+      const emptyIdIndex = idColumnValue.indexOf("");
       row = tableRange.getRow(emptyIdIndex);
     }
-    row.load('values');
+    row.load("values");
     context.trackedObjects.add(row);
     await context.sync();
 
@@ -239,53 +380,37 @@ async function writeTableLinked(
   tableData: TableInterface[]
 ): Promise<void> {
   for (const data of tableData) {
-    const tableName = data['@type'].split(':')[1];
-    const recordId = data['@id'];
+    const tableName = data["@type"].split(":")[1];
+    const recordId = data["@id"];
     const worksheet = context.workbook.worksheets.getItem(tableName);
-    worksheet.load('tables');
+    worksheet.load("tables");
     context.trackedObjects.add(worksheet);
     await context.sync();
     const table = worksheet.tables.getItem(tableName);
     const tableRange = table.getRange();
     const tableHeaderRange = table.getHeaderRowRange();
-    tableRange.load('values');
-    tableHeaderRange.load('values');
+    tableRange.load("values");
+    tableHeaderRange.load("values");
     context.trackedObjects.add(tableRange);
     context.trackedObjects.add(tableHeaderRange);
     await context.sync();
-    const idColumnIndex = tableHeaderRange.values[0].indexOf('@id');
+    const idColumnIndex = tableHeaderRange.values[0].indexOf("@id");
     const idColumn = tableRange.getColumn(idColumnIndex);
-    idColumn.load('values');
+    idColumn.load("values");
     context.trackedObjects.add(idColumn);
     await context.sync();
     const idColumnValues = idColumn.values;
 
     // Create the record
-    const record: { [key: string]: unknown } = {};
+    let record: { [key: string]: unknown } = {};
     for (let [key, value] of Object.entries(data)) {
-      if (key === 'value') {
-        key = 'i72:value';
-      }
-      if (key === 'hasLegalName') {
-        key = 'org:hasLegalName';
-      }
-      const cid = new map[tableName as ModelType]();
-      if (
-        key !== '@type' &&
-        key !== '@context' &&
-        checkIfFieldIsRecognized(tableName, key) &&
-        cid.getFieldByName(key)?.type === 'link'
-      ) {
-        // Skip if the value is empty
-        if (!value) continue;
+      const cid = createInstance(tableName as ModelType | SFFModelType);
 
-        // @ts-ignore
-        if (!Array.isArray(value)) value = [value];
-
-        // remove duplicates from value
-        value = [...new Set(value as string[])];
-
-        record[key] = value;
+      if (key !== "@type" && key !== "@context") {
+        const field = cid.getFieldByName(key);
+        if (field) {
+          record = findLinkFieldsRecursively(tableName, field, data, record);
+        }
       }
     }
 
@@ -299,10 +424,10 @@ async function writeTableLinked(
     } else {
       // Add the record
       // Get first row with empty id
-      idIndex = idColumnValue.indexOf('');
+      idIndex = idColumnValue.indexOf("");
       row = tableRange.getRow(idIndex);
     }
-    row.load('values');
+    row.load("values");
     context.trackedObjects.add(row);
     await context.sync();
     const rowValues = row.values[0];
@@ -312,11 +437,11 @@ async function writeTableLinked(
       const columnIndex = tableHeaderRange.values[0].indexOf(key);
       value = [
         ...new Set([
-          ...((rowValues[columnIndex] as string).split(', ') || []),
+          ...((rowValues[columnIndex] as string).split(", ") || []),
           ...((value as string[]) || []),
         ]),
-      ].filter((v) => v !== null && v !== undefined && v !== '');
-      row.getCell(0, columnIndex).values = [[(value as string[]).join(', ')]];
+      ].filter((v) => v !== null && v !== undefined && v !== "");
+      row.getCell(0, columnIndex).values = [[(value as string[]).join(", ")]];
     }
 
     context.trackedObjects.remove(row);
@@ -324,15 +449,23 @@ async function writeTableLinked(
 
     // Update the linked tables
     for (const [key, value] of Object.entries(record)) {
-      const relatedTableName = key.substring(3);
-      const relatedFieldName = key.startsWith('has') ? `for${tableName}` : `has${tableName}`;
-      await updateLinkedTablesFields(
-        context,
-        recordId,
-        value as string[],
-        relatedTableName,
-        relatedFieldName
-      );
+      const cid = createInstance(tableName as ModelType | SFFModelType);
+      const field = cid.getFieldByName(key);
+      if (
+        field.link &&
+        field.link.table &&
+        tableName !== field.link.table.className &&
+        (!(field.link.table.className in ignoredFields) ||
+          !ignoredFields[field.link.table.className].includes(field.link.field))
+      ) {
+        await updateLinkedTablesFields(
+          context,
+          recordId,
+          (value as string[]) || [],
+          field.link.table.className,
+          field.link.field
+        );
+      }
     }
 
     context.trackedObjects.remove(idColumn);
@@ -343,6 +476,37 @@ async function writeTableLinked(
   }
 }
 
+/* eslint-disable no-param-reassign */
+function handleLinkFields(value: any) {
+  if (!value) return; // Skip if the value is empty
+
+  if (!Array.isArray(value)) value = [value];
+
+  // remove duplicates from value
+  value = [...new Set(value as string[])];
+
+  if (value.length === 0) {
+    return;
+  }
+
+  return value;
+}
+/* eslint-enable no-param-reassign */
+
+function findLinkFieldsRecursively(tableName: string, field: FieldType, data: any, record: any) {
+  if (field?.type === "object" && field.properties) {
+    for (const prop of field.properties) {
+      findLinkFieldsRecursively(tableName, prop, data[field.name], record);
+    }
+  } else {
+    if (field.type === "link") {
+      // eslint-disable-next-line no-param-reassign
+      record[field.displayName || field.name] = handleLinkFields(data[field.name]);
+    }
+  }
+  return record;
+}
+
 async function updateLinkedTablesFields(
   context: Excel.RequestContext,
   currentFieldId: string,
@@ -351,23 +515,23 @@ async function updateLinkedTablesFields(
   relatedFieldName: string
 ) {
   const worksheet = context.workbook.worksheets.getItem(relatedTableName);
-  worksheet.load('tables');
+  worksheet.load("tables");
   context.trackedObjects.add(worksheet);
   await context.sync();
   const table = worksheet.tables.getItem(relatedTableName);
   const tableHeadersRange = table.getHeaderRowRange();
   const tableRange = table.getRange();
-  tableHeadersRange.load('values');
-  tableRange.load('values');
+  tableHeadersRange.load("values");
+  tableRange.load("values");
   context.trackedObjects.add(tableHeadersRange);
   context.trackedObjects.add(tableRange);
   await context.sync();
   const relatedFieldIndex = tableHeadersRange.values[0].indexOf(relatedFieldName);
-  const idColumnIndex = tableHeadersRange.values[0].indexOf('@id');
+  const idColumnIndex = tableHeadersRange.values[0].indexOf("@id");
   const relatedFieldColumn = tableRange.getColumn(relatedFieldIndex);
   const idColumn = tableRange.getColumn(idColumnIndex);
-  relatedFieldColumn.load('values');
-  idColumn.load('values');
+  relatedFieldColumn.load("values");
+  idColumn.load("values");
   context.trackedObjects.add(relatedFieldColumn);
   context.trackedObjects.add(idColumn);
   await context.sync();
@@ -378,7 +542,7 @@ async function updateLinkedTablesFields(
   for (let i = 0; i < relatedFieldValues.length; i++) {
     const idColumnValue = idColumnValues[i][0].toString();
     const relatedFieldValue = relatedFieldValues[i][0].toString();
-    const relatedFieldValueArray: string[] = relatedFieldValue.split(', ');
+    const relatedFieldValueArray: string[] = relatedFieldValue.split(", ");
 
     if (!idColumnValue) {
       continue;
@@ -393,8 +557,8 @@ async function updateLinkedTablesFields(
         [
           relatedFieldValueArray
             .concat(currentFieldId)
-            .filter((v) => v !== null && v !== undefined && v !== '')
-            .join(', '),
+            .filter((v) => v !== null && v !== undefined && v !== "")
+            .join(", "),
         ],
       ];
     }
@@ -413,10 +577,23 @@ function removeDuplicatedLinks(jsonData: any) {
     for (const [key, value] of Object.entries(data)) {
       if (Array.isArray(value)) {
         data[key] = [...new Set(value)];
+      } else if (value && typeof value === "object") {
+        removeDuplicatedLinksRecursively(value);
       }
     }
   }
   return jsonData;
+}
+
+function removeDuplicatedLinksRecursively(data: any) {
+  for (const [key, value] of Object.entries(data)) {
+    if (Array.isArray(value)) {
+      // eslint-disable-next-line no-param-reassign
+      data[key] = [...new Set(value)];
+    } else if (typeof value === "object") {
+      removeDuplicatedLinksRecursively(value);
+    }
+  }
 }
 
 function validateIfEmptyFile(tableData: TableInterface[]) {
@@ -428,38 +605,42 @@ function validateIfEmptyFile(tableData: TableInterface[]) {
 
 function doAllRecordsHaveId(tableData: TableInterface[]) {
   for (const data of tableData) {
-    if (data['@id'] === undefined) {
+    if (data["@id"] === undefined) {
       return false;
     }
   }
   return true;
 }
 
-function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[]) {
+function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[], intl: IntlShape) {
   const warnings = [];
   const classesSet = new Set();
   for (const data of tableData) {
-    if (!data['@type']) {
+    if (
+      !data["@type"] ||
+      (!Object.keys(map).includes(data["@type"].split(":")[1]) &&
+        !Object.keys(mapSFFModel).includes(data["@type"].split(":")[1]))
+    ) {
       continue;
     }
-    const tableName = data['@type'].split(':')[1];
-    if (!Object.keys(map).includes(tableName)) {
-      continue;
-    }
+
+    const tableName = data["@type"].split(":")[1];
     if (classesSet.has(tableName)) {
       continue;
     }
+
     classesSet.add(tableName);
     for (const key in data) {
-      if (
-        !checkIfFieldIsRecognized(tableName, key) &&
-        key !== '@type' &&
-        key !== '@context' &&
-        key !== 'value' &&
-        key !== 'hasLegalName'
-      ) {
+      if (!checkIfFieldIsRecognized(tableName, key) && key !== "@type" && key !== "@context") {
         warnings.push(
-          `Table <b>${tableName}</b> has unrecognized field <b>${key}</b>. This field will be ignored.`
+          `${intl.formatMessage(
+            {
+              id: "import.messages.warning.unrecognizedField",
+              defaultMessage:
+                "Table <b>{tableName}</b> has unrecognized field <b>{fieldName}</b>. This field will be ignored.",
+            },
+            { tableName, fieldName: key, b: (str) => `<b>${str}</b>` }
+          )}`
         );
       }
     }
@@ -468,11 +649,110 @@ function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[]) {
 }
 
 function checkIfFieldIsRecognized(tableName: string, fieldName: string) {
-  if (tableName === Organization.className && fieldName === 'hasLegalName') return true;
-  if (tableName === IndicatorReport.className && fieldName === 'value') return true;
-  const cid = new map[tableName as ModelType]();
+  const cid = createInstance(tableName as ModelType | SFFModelType);
   return cid
-    .getFields()
-    .map((item) => item.name)
+    .getAllFields()
+    .reduce((acc: string[], field) => {
+      acc.push(field.name);
+      if (field.name.includes(":")) {
+        acc.push(field.name.split(":")[1]);
+      }
+      return acc;
+    }, [])
     .includes(fieldName);
+}
+
+function findLastFieldValueForNestedFields(data: any, field: FieldType, record: any) {
+  if (field?.type === "object" && field.properties) {
+    for (const prop of field.properties) {
+      let dataPropName;
+      if (field.name.includes(":") && Object.keys(data).includes(field.name.split(":")[1])) {
+        dataPropName = field.name.split(":")[1];
+      } else {
+        dataPropName = field.name;
+      }
+      const recordData = data[dataPropName];
+      findLastFieldValueForNestedFields(recordData, prop, record);
+    }
+  } else if (data && typeof data === "object" && !Array.isArray(data)) {
+    let recordData;
+    if (field.name.includes(":") && Object.keys(data).includes(field.name.split(":")[1])) {
+      recordData = data[field.name.split(":")[1]];
+    } else {
+      recordData = data[field.name];
+    }
+    // eslint-disable-next-line no-param-reassign
+    record[field.displayName || field.name] = recordData;
+  } else {
+    let value = data;
+    if (value) {
+      value = data.toString();
+    }
+    // eslint-disable-next-line no-param-reassign
+    record[field.displayName || field.name] = value;
+  }
+
+  return record;
+}
+
+function transformObjectFieldIfWrongFormat(jsonData: TableInterface[]) {
+  for (const data of jsonData) {
+    for (const [key, value] of Object.entries(data)) {
+      if (
+        !data["@type"] ||
+        (!Object.keys(map).includes(data["@type"].split(":")[1]) &&
+          !Object.keys(mapSFFModel).includes(data["@type"].split(":")[1]))
+      ) {
+        continue;
+      }
+
+      if (key === "@type" || key === "@context" || key === "@id") {
+        continue;
+      }
+
+      let cid;
+      if (Object.keys(map).includes(data["@type"].split(":")[1])) {
+        cid = new map[data["@type"].split(":")[1] as ModelType]();
+      } else {
+        cid = new mapSFFModel[data["@type"].split(":")[1] as SFFModelType]();
+      }
+
+      const field = cid.getFieldByName(key);
+      if (field?.type === "object") {
+        const fieldValue = handleNestedObjectFieldType(jsonData, field, value);
+        if (fieldValue) {
+          data[key] = fieldValue;
+        }
+      } else if (field?.type === "link" && typeof value === "object" && !Array.isArray(value)) {
+        let id = value["@id"];
+        if (!id) {
+          id =
+            data["@id"] +
+            "/" +
+            (value["@type"].includes(":") ? value["@type"].split(":")[1] : value["@type"]);
+        }
+        value["@id"] = id;
+        jsonData.push(value);
+        data[key] = id;
+      }
+    }
+  }
+  return jsonData;
+}
+
+function handleNestedObjectFieldType(data: TableInterface[], field: FieldType, value: any) {
+  let fieldValue: any = null;
+  if (field?.type === "object" && typeof value === "string") {
+    fieldValue = data.find((d) => d["@id"] === value);
+  } else if (field?.type === "object" && Array.isArray(value)) {
+    fieldValue = data.find((d) => d["@id"] === value[0]);
+  } else if (field?.type === "object" && typeof value === "object" && field.properties) {
+    for (const prop of field.properties) {
+      const newValue = handleNestedObjectFieldType(data, prop, value[prop.name]);
+      if (newValue) {
+        fieldValue = { [field.name]: newValue };
+      }
+    }
+  }
+  return fieldValue;
 }

@@ -1,7 +1,8 @@
 import { Base } from "./Base";
+import { EDGProfile } from "./EDGProfile";
 
-export class Theme extends Base {
-  static className = "Theme";
+export class TeamProfile extends Base {
+  static className = "TeamProfile";
 
   constructor() {
     super();
@@ -17,16 +18,38 @@ export class Theme extends Base {
         semiRequired: true,
       },
       {
-        name: "hasName",
+        name: "hasTeamSize",
         type: "string",
         representedType: "string",
+        defaultValue: "",
         unique: false,
         notNull: true,
         required: false,
         semiRequired: true,
       },
       {
-        name: "hasDescription",
+        name: "hasEDGSize",
+        type: "string",
+        representedType: "string",
+        defaultValue: "",
+        unique: false,
+        notNull: false,
+        required: false,
+        semiRequired: false,
+      },
+      {
+        name: "hasEDGProfile",
+        type: "link",
+        representedType: "array",
+        defaultValue: [],
+        link: { table: EDGProfile, field: "forTeamProfile" },
+        unique: false,
+        notNull: false,
+        required: false,
+        semiRequired: false,
+      },
+      {
+        name: "hasComment",
         type: "text",
         representedType: "string",
         defaultValue: "",
@@ -36,25 +59,14 @@ export class Theme extends Base {
         semiRequired: false,
       },
       {
-        name: "hasCode",
-        type: "string",
-        representedType: "array",
-        defaultValue: [],
+        name: "reportedDate",
+        type: "date",
+        representedType: "string",
+        defaultValue: "",
         unique: false,
-        notNull: false,
+        notNull: true,
         required: false,
-        semiRequired: false,
-      },
-      {
-        name: "relatesTo",
-        type: "link",
-        representedType: "array",
-        defaultValue: [],
-        link: { table: Theme, field: "relatesTo" },
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: false,
+        semiRequired: true,
       },
     ];
   }

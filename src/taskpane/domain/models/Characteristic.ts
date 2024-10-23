@@ -1,7 +1,8 @@
 import { Base } from "./Base";
+import { PopulationServed } from "./PopulationServed";
 
-export class Theme extends Base {
-  static className = "Theme";
+export class Characteristic extends Base {
+  static className = "Characteristic";
 
   constructor() {
     super();
@@ -20,41 +21,32 @@ export class Theme extends Base {
         name: "hasName",
         type: "string",
         representedType: "string",
+        defaultValue: "",
         unique: false,
         notNull: true,
         required: false,
         semiRequired: true,
       },
       {
-        name: "hasDescription",
-        type: "text",
+        name: "hasValue",
+        type: "string",
         representedType: "string",
         defaultValue: "",
         unique: false,
         notNull: false,
         required: false,
-        semiRequired: false,
+        semiRequired: true,
       },
       {
         name: "hasCode",
-        type: "string",
-        representedType: "array",
-        defaultValue: [],
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: false,
-      },
-      {
-        name: "relatesTo",
         type: "link",
         representedType: "array",
         defaultValue: [],
-        link: { table: Theme, field: "relatesTo" },
+        link: { table: PopulationServed, field: "forCharacteristic" },
         unique: false,
         notNull: false,
         required: false,
-        semiRequired: false,
+        semiRequired: true,
       },
     ];
   }

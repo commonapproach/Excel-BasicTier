@@ -1,7 +1,7 @@
 import { Base } from "./Base";
 
-export class Theme extends Base {
-  static className = "Theme";
+export class Person extends Base {
+  static className = "Person";
 
   constructor() {
     super();
@@ -17,7 +17,8 @@ export class Theme extends Base {
         semiRequired: true,
       },
       {
-        name: "hasName",
+        name: "foaf:givenName",
+        displayName: "givenName",
         type: "string",
         representedType: "string",
         unique: false,
@@ -26,35 +27,26 @@ export class Theme extends Base {
         semiRequired: true,
       },
       {
-        name: "hasDescription",
-        type: "text",
+        name: "foaf:familyName",
+        displayName: "familyName",
+        type: "string",
+        representedType: "string",
+        defaultValue: "",
+        unique: false,
+        notNull: true,
+        required: false,
+        semiRequired: true,
+      },
+      {
+        name: "ic:hasEmail",
+        displayName: "hasEmail",
+        type: "string",
         representedType: "string",
         defaultValue: "",
         unique: false,
         notNull: false,
         required: false,
-        semiRequired: false,
-      },
-      {
-        name: "hasCode",
-        type: "string",
-        representedType: "array",
-        defaultValue: [],
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: false,
-      },
-      {
-        name: "relatesTo",
-        type: "link",
-        representedType: "array",
-        defaultValue: [],
-        link: { table: Theme, field: "relatesTo" },
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: false,
+        semiRequired: true,
       },
     ];
   }

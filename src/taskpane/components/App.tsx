@@ -1,33 +1,39 @@
-import { Button, makeStyles } from '@fluentui/react-components';
+import { Button, makeStyles } from "@fluentui/react-components";
 import {
   Add24Regular,
   ArrowCircleDown24Regular,
   ArrowCircleUp24Regular,
-} from '@fluentui/react-icons';
-import * as React from 'react';
-import { useDialogContext } from '../context/DialogContext';
-import { importData } from '../import/import';
-import { createSheetsAndTables } from '../taskpane';
-import ExportDialog from './ExportDialog';
-import Header from './Header';
+} from "@fluentui/react-icons";
+import { ArrowSync24Regular } from "@fluentui/react-icons/fonts";
+import * as React from "react";
+import { FormattedMessage, useIntl } from "react-intl";
+import { useDialogContext } from "../context/DialogContext";
+import { importData } from "../import/import";
+import {
+  createSFFModuleSheetsAndTables,
+  createSheetsAndTables,
+  populateCodeLists,
+} from "../taskpane";
+import ExportDialog from "./ExportDialog";
+import Header from "./Header";
 
 interface AppProps {}
 
 const useStyles = makeStyles({
   root: {
-    minHeight: '100vh',
-    width: '100%',
+    minHeight: "100vh",
+    width: "100%",
   },
   buttons_group: {
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: '1rem',
-    gap: '1rem',
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "center",
+    margin: "1rem",
+    gap: "1rem",
   },
   button: {
-    width: '160px',
+    width: "160px",
   },
 });
 
@@ -37,6 +43,7 @@ const App: React.FC<AppProps> = () => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = React.useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = React.useState(false);
+  const intl = useIntl();
 
   const handleImportData = () => {
     if (fileInputRef.current) {
@@ -50,19 +57,19 @@ const App: React.FC<AppProps> = () => {
     onError: (error: any) => void
   ): Promise<void> => {
     const file = event.target.files[0];
-    if (file && (file.name.endsWith('.jsonld') || file.name.endsWith('.json'))) {
+    if (file && (file.name.endsWith(".jsonld") || file.name.endsWith(".json"))) {
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
           const data = JSON.parse(e.target?.result as any);
           await onSuccess(data);
         } catch (error) {
-          onError(new Error('File is not a valid JSON/JSON-LD file.'));
+          onError(new Error(intl.formatMessage({ id: "import.messages.error.notValidJson" })));
         }
       };
       reader.readAsText(file);
     } else {
-      onError(new Error('File is not a JSON/JSON-LD file.'));
+      onError(new Error(intl.formatMessage({ id: "import.messages.error.notJson" })));
     }
   };
 
@@ -74,83 +81,203 @@ const App: React.FC<AppProps> = () => {
       />
       <Header />
       <div className={styles.buttons_group}>
+        <input
+          ref={fileInputRef}
+          style={{ display: "none" }}
+          title="file"
+          type="file"
+          onChange={async (e) => {
+            await handleFileChange(
+              e,
+              async (data) => {
+                try {
+                  await importData(intl, data, dialog.showDialog, setIsImporting);
+                } catch (error: any) {
+                  setIsImporting(false);
+                  dialog.showDialog(
+                    `${intl.formatMessage({ id: "generics.error" })}!`,
+                    error.message || intl.formatMessage({ id: "generics.error.message" })
+                  );
+                }
+              },
+              (error) => {
+                dialog.showDialog(
+                  `${intl.formatMessage({ id: "generics.error" })}!`,
+                  error.message
+                );
+              }
+            );
+            // clear the file input
+            if (fileInputRef.current) {
+              fileInputRef.current.value = "";
+            }
+          }}
+        />
         <Button
-          content='Import Data'
+          content={intl.formatMessage({ id: "app.button.importData" })}
           onClick={handleImportData}
-          appearance='outline'
+          appearance="outline"
           icon={<ArrowCircleUp24Regular />}
-          iconPosition='before'
+          iconPosition="before"
           disabled={isImporting}
           className={styles.button}
           style={{
-            borderColor: 'rgb(60, 174, 163)',
-            color: 'rgb(60, 174, 163)',
+            borderColor: "rgb(60, 174, 163)",
+            color: "rgb(60, 174, 163)",
           }}
         >
-          Import Data
+          <FormattedMessage id="app.button.importData" />
         </Button>
         <Button
-          content='Export Data'
+          content={intl.formatMessage({ id: "app.button.exportData" })}
           onClick={() => {
             setIsExportDialogOpen(true);
           }}
-          appearance='outline'
+          appearance="outline"
           icon={<ArrowCircleDown24Regular />}
-          iconPosition='before'
+          iconPosition="before"
           disabled={isImporting}
           className={styles.button}
           style={{
-            borderColor: 'rgb(80, 183, 224)',
-            color: 'rgb(80, 183, 224)',
+            borderColor: "rgb(80, 183, 224)",
+            color: "rgb(80, 183, 224)",
           }}
         >
-          Export Data
+          <FormattedMessage id="app.button.exportData" />
         </Button>
         <Button
-          content='Create Sheets and Tables'
-          onClick={() => {
-            createSheetsAndTables();
+          content={intl.formatMessage({ id: "app.button.createTables" })}
+          onClick={async () => {
+            try {
+              await createSheetsAndTables();
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.success",
+                  defaultMessage: "Success",
+                }),
+                intl.formatMessage({
+                  id: "createTables.messages.success",
+                  defaultMessage: "Tables created successfully",
+                })
+              );
+            } catch (error: any) {
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.error",
+                  defaultMessage: "Error",
+                }),
+                error.message ||
+                  intl.formatMessage({
+                    id: "generics.error.message",
+                    defaultMessage: "Something went wrong",
+                  })
+              );
+            }
           }}
-          appearance='outline'
-          color='brand'
+          appearance="outline"
+          color="brand"
           icon={<Add24Regular />}
-          iconPosition='before'
+          iconPosition="before"
           disabled={isImporting}
           className={styles.button}
           style={{
-            borderColor: 'rgb(45, 98, 215)',
-            color: 'rgb(45, 98, 215)',
+            borderColor: "rgb(45, 98, 215)",
+            color: "rgb(45, 98, 215)",
           }}
         >
-          Create Tables
+          <FormattedMessage id="app.button.createTables" />
+        </Button>
+        <Button
+          content={intl.formatMessage({ id: "app.button.createSFFTables" })}
+          onClick={async () => {
+            try {
+              await createSFFModuleSheetsAndTables();
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.success",
+                  defaultMessage: "Success",
+                }),
+                intl.formatMessage({
+                  id: "createTables.messages.success",
+                  defaultMessage: "Tables created successfully",
+                })
+              );
+            } catch (error: any) {
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.error",
+                  defaultMessage: "Error",
+                }),
+                error.message ||
+                  intl.formatMessage({
+                    id: "generics.error.message",
+                    defaultMessage: "Something went wrong",
+                  })
+              );
+            }
+          }}
+          appearance="outline"
+          color="brand"
+          icon={<Add24Regular />}
+          iconPosition="before"
+          disabled={isImporting}
+          className={styles.button}
+          style={{
+            borderColor: "#A6A6A6",
+            color: "#A6A6A6",
+          }}
+        >
+          <FormattedMessage id="app.button.createSFFTables" />
+        </Button>
+        <Button
+          content={intl.formatMessage({ id: "app.button.syncCodeLists" })}
+          onClick={async () => {
+            try {
+              await populateCodeLists();
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.success",
+                  defaultMessage: "Success",
+                }),
+                intl.formatMessage({
+                  id: "syncCodeLists.messages.success",
+                  defaultMessage: "Code lists synchronized successfully",
+                })
+              );
+            } catch (error: any) {
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.error",
+                  defaultMessage: "Error",
+                }),
+                intl
+                  .formatMessage(
+                    {
+                      id: "createTables.messages.error.populateCodeList",
+                      defaultMessage: "Error populating code list: {tableName}",
+                    },
+                    {
+                      tableName: error.message,
+                    }
+                  )
+                  ?.toString() || intl.formatMessage({ id: "generics.error.message" })
+              );
+            }
+          }}
+          appearance="outline"
+          color="brand"
+          icon={<ArrowSync24Regular />}
+          iconPosition="before"
+          disabled={isImporting}
+          className={styles.button}
+          style={{
+            borderColor: "#1B4B9D",
+            color: "#1B4B9D",
+          }}
+        >
+          <FormattedMessage id="app.button.syncCodeLists" />
         </Button>
       </div>
-      <input
-        ref={fileInputRef}
-        style={{ display: 'none' }}
-        title='file'
-        type='file'
-        onChange={async (e) => {
-          await handleFileChange(
-            e,
-            async (data) => {
-              try {
-                await importData(data, dialog.showDialog, setIsImporting);
-              } catch (error: any) {
-                setIsImporting(false);
-                dialog.showDialog('Error!', error.message || 'Something went wrong');
-              }
-            },
-            (error) => {
-              dialog.showDialog('Error!', error.message);
-            }
-          );
-          // clear the file input
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
-          }
-        }}
-      />
     </div>
   );
 };

@@ -22,12 +22,12 @@
     "prettier/prettier": [
       "error",
       {
-        "singleQuote": true,
+        "singleQuote": false,
         "usePrettierrc": true,
         "endOfLine": "lf",
         "trailingComma": "es5",
         "useTabs": false,
-        "jsxSingleQuote": true,
+        "jsxSingleQuote": false,
         "singleAttributePerLine": true,
         "printWidth": 100
       }
@@ -140,7 +140,7 @@
     ],
     "quotes": [
       "error",
-      "single"
+      "double"
     ]
   },
   "settings": {

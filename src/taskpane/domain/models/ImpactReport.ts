@@ -1,10 +1,8 @@
 import { Base } from "./Base";
-import { Indicator } from "./Indicator";
 import { Organization } from "./Organization";
-import { Theme } from "./Theme";
 
-export class Outcome extends Base {
-  static className = "Outcome";
+export class ImpactReport extends Base {
+  static className: string = "ImpactReport";
 
   constructor() {
     super();
@@ -29,45 +27,35 @@ export class Outcome extends Base {
         semiRequired: false,
       },
       {
-        name: "hasDescription",
-        type: "text",
-        representedType: "string",
-        defaultValue: "",
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: false,
-      },
-      {
-        name: "forTheme",
-        type: "link",
-        representedType: "array",
-        defaultValue: [],
-        link: { table: Theme, field: "hasOutcome" },
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: true,
-      },
-      {
         name: "forOrganization",
         type: "link",
         representedType: "string",
         defaultValue: "",
-        link: { table: Organization, field: "hasOutcome" },
+        link: { table: Organization, field: "hasImpactReport" },
         unique: false,
         notNull: false,
         required: false,
         semiRequired: true,
       },
       {
-        name: "hasIndicator",
-        type: "link",
-        representedType: "array",
-        defaultValue: [],
-        link: { table: Indicator, field: "forOutcome" },
+        name: "prov:startedAtTime",
+        displayName: "startedAtTime",
+        type: "datetime",
+        representedType: "string",
+        defaultValue: "",
         unique: false,
-        notNull: false,
+        notNull: true,
+        required: false,
+        semiRequired: true,
+      },
+      {
+        name: "prov:endedAtTime",
+        displayName: "endedAtTime",
+        type: "datetime",
+        representedType: "string",
+        defaultValue: "",
+        unique: false,
+        notNull: true,
         required: false,
         semiRequired: true,
       },
