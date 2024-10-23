@@ -99,6 +99,9 @@ export async function createSheetsAndTables() {
 }
 
 export async function createSFFModuleSheetsAndTables() {
+  // Try to create all basic sheets and tables first
+  await createSheetsAndTables();
+
   await Excel.run(async (context) => {
     try {
       const sheets = context.workbook.worksheets;
