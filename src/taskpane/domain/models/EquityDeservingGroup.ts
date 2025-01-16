@@ -34,9 +34,9 @@ export class EquityDeservingGroup extends Base {
         defaultValue: [],
         link: { table: Characteristic, field: "forEquityDeservingGroup" },
         unique: false,
-        notNull: true,
+        notNull: false,
         required: false,
-        semiRequired: true,
+        semiRequired: false,
       },
       {
         name: "isDefined",

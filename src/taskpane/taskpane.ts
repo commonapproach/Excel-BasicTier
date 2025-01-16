@@ -27,9 +27,9 @@ const hiddenSheets = [
 Office.onReady(() => {
   // If needed, Office.js is ready to be called.
 
-  // Add multi-select functionality if the user have all the standard tables
+  // Add lookup multi-select functionality if the user have all the standard tables
   if (Office.context.host === Office.HostType.Excel) {
-    addMultiSelectHandlerToAllTables();
+    addLookupMultiSelectHandlerToAllTables();
   }
 });
 
@@ -79,10 +79,10 @@ export async function createSheetsAndTables() {
         }
       }
 
-      // Add multi-select functionality to link fields
+      // Add lookup multi-select functionality to link fields
       for (const sheetName of Object.keys(map)) {
         try {
-          await addMultiSelectToLinkFieldsOnSheet(context, sheetName as ModelType);
+          await addLookupMultiSelectToLinkFieldsOnSheet(context, sheetName as ModelType);
         } catch (error) {
           console.log("Error: " + error);
         }
@@ -146,10 +146,10 @@ export async function createSFFModuleSheetsAndTables() {
         }
       }
 
-      // Add multi-select functionality to link fields
+      // Add lookup multi-select functionality to link fields
       for (const sheetName of Object.keys(mapSFFModel)) {
         try {
-          await addMultiSelectToLinkFieldsOnSheet(context, sheetName as SFFModelType);
+          await addLookupMultiSelectToLinkFieldsOnSheet(context, sheetName as SFFModelType);
         } catch (error) {
           console.log("Error: " + error);
         }
@@ -283,7 +283,7 @@ async function createHiddenTables(context: Excel.RequestContext, tableName: stri
   await context.sync();
 }
 
-async function addMultiSelectToLinkFieldsOnSheet(
+async function addLookupMultiSelectToLinkFieldsOnSheet(
   context: Excel.RequestContext,
   sheetName: ModelType | SFFModelType
 ) {
@@ -301,7 +301,7 @@ async function addMultiSelectToLinkFieldsOnSheet(
 
   for (const field of fields) {
     if (field.link) {
-      await addMultiSelectToFields(
+      await addLookupMultiSelectToFields(
         context,
         sheet,
         field.displayName || field.name,
@@ -318,13 +318,23 @@ async function addMultiSelectToLinkFieldsOnSheet(
         ) || field.name,
         totalRows.count
       );
+    } else if (field.type === "multiselect") {
+      await addMultiSelectToFields(
+        context,
+        sheet,
+        field.displayName || field.name,
+        [...predefinedCodeLists, ...hiddenSheets].find((listName) =>
+          field.name.toLowerCase().includes(listName.toLowerCase())
+        ) || field.name,
+        totalRows.count
+      );
     }
   }
 
   await context.sync();
 }
 
-async function addMultiSelectToFields(
+async function addLookupMultiSelectToFields(
   context: Excel.RequestContext,
   sheet: Excel.Worksheet,
   fieldName: string,
@@ -381,8 +391,8 @@ async function addMultiSelectToFields(
   range.load("address");
   await context.sync();
 
-  // Add multi-select change handler to the range
-  addMultiSelectHandler(sheet, range.address);
+  // Add lookup multi-select change handler to the range
+  addLookupMultiSelectHandler(sheet, range.address);
 }
 
 async function addSelectToFields(
@@ -442,11 +452,76 @@ async function addSelectToFields(
   await context.sync();
 }
 
+async function addMultiSelectToFields(
+  context: Excel.RequestContext,
+  sheet: Excel.Worksheet,
+  fieldName: string,
+  linkTo: string,
+  totalRows: number
+) {
+  const headerRange = sheet
+    .getUsedRange()
+    .find(fieldName, { completeMatch: true, matchCase: true });
+
+  if (!headerRange) {
+    if (dialogHandler) {
+      dialogHandler(
+        {
+          descriptor: {
+            id: "generics.error",
+          },
+        },
+        {
+          descriptor: {
+            id: "createTables.messages.error.fieldNotFound",
+            defaultMessage: "Field {fieldName} not found in the sheet {sheetName}.",
+          },
+          values: { fieldName, sheetName: sheet.name },
+        }
+      );
+    }
+    return;
+  }
+
+  // Get the column index of the field to add data validation
+  headerRange.load("columnIndex");
+  await context.sync();
+  const column = headerRange.columnIndex;
+
+  const range = sheet.getRangeByIndexes(1, column, totalRows, 1);
+
+  // Add data validation to the range
+  range.dataValidation.rule = {
+    list: {
+      inCellDropDown: true,
+      source: `=INDIRECT("${linkTo}[name]")`,
+    },
+  };
+
+  // Block the user from entering values that are not in the list
+  range.dataValidation.errorAlert = {
+    message: "Please select a value from the list.",
+    showAlert: true,
+    style: "Stop",
+    title: "Invalid value",
+  };
+
+  range.load("address");
+  await context.sync();
+
+  // Add multiselect change handler to the range
+  addMultiSelectHandler(sheet, range.address);
+}
+
+function addLookupMultiSelectHandler(sheet: Excel.Worksheet, rangeAddress: string) {
+  sheet.onChanged.add(async (e) => lookupMultiSelectEventHandler(e, rangeAddress));
+}
+
 function addMultiSelectHandler(sheet: Excel.Worksheet, rangeAddress: string) {
   sheet.onChanged.add(async (e) => multiSelectEventHandler(e, rangeAddress));
 }
 
-async function multiSelectEventHandler(
+async function lookupMultiSelectEventHandler(
   event: Excel.WorksheetChangedEventArgs,
   rangeAddress: string
 ) {
@@ -716,7 +791,73 @@ async function multiSelectEventHandler(
   });
 }
 
-// Check if target cell is in the multi-select range
+async function multiSelectEventHandler(
+  event: Excel.WorksheetChangedEventArgs,
+  rangeAddress: string
+) {
+  if (event.triggerSource === "ThisLocalAddin") {
+    return;
+  }
+  if (!event.details) {
+    if (dialogHandler) {
+      dialogHandler(
+        {
+          descriptor: {
+            id: "generics.warning",
+          },
+        },
+        {
+          descriptor: {
+            id: "eventHandler.messages.warning.changesForRangeNotSupported",
+            defaultMessage:
+              "Changes for range are not supported. If you are trying to change fields that might be linked, please undo the operation and do it one by one.",
+          },
+        }
+      );
+    }
+    return;
+  }
+  await Excel.run(async (context) => {
+    try {
+      const activeSheet = context.workbook.worksheets.getActiveWorksheet();
+      const targetCell = event.getRange(context);
+      targetCell.load("address, values, rowIndex");
+      await context.sync();
+
+      if (isCellInRange(targetCell.address, rangeAddress)) {
+        const newValue: string = event.details.valueAfter.toString();
+        const oldValue: string = event.details.valueBefore.toString();
+        const newValueArray = newValue.split(", ");
+        const oldValueArray = oldValue.split(", ");
+
+        let targetCellValue;
+
+        if ((newValue === "" || newValue === null) && (oldValue === "" || oldValue === null)) {
+          targetCellValue = [[newValue.toString()]];
+        }
+        if (newValueArray.length > 1 && oldValueArray.length > 1 && newValue === oldValue) {
+          targetCellValue = [[oldValue]];
+          return;
+        }
+        if (oldValue && oldValueArray.indexOf(newValue) === -1) {
+          targetCellValue = [[oldValue + ", " + newValue]];
+        } else if (oldValue && oldValueArray.indexOf(newValue) !== -1) {
+          const newValues = oldValueArray.filter((value: string) => value !== newValue);
+          targetCellValue = [[newValues.join(", ")]];
+        }
+        if (!oldValue) {
+          targetCellValue = [[newValue]];
+        }
+
+        targetCell.values = targetCellValue || [[oldValue]];
+      }
+    } catch (error) {
+      console.log("Error: " + error);
+    }
+  });
+}
+
+// Check if target cell is in the multi-select/lookup multi-select range
 function isCellInRange(cellAddress: string, columnsRangeAddress: string) {
   const [startCell, endCell] = columnsRangeAddress.split(":");
   const columnRangeStart = startCell.match(/[A-Z]\d+/g) || [];
@@ -750,7 +891,7 @@ function isCellInRange(cellAddress: string, columnsRangeAddress: string) {
   );
 }
 
-async function addMultiSelectHandlerToAllTables() {
+async function addLookupMultiSelectHandlerToAllTables() {
   await Excel.run(async (context) => {
     try {
       const sheets = context.workbook.worksheets;
@@ -760,9 +901,12 @@ async function addMultiSelectHandlerToAllTables() {
 
       const sheetNames = Object.keys(map);
 
+      // Join the SFFModelType sheet names
+      sheetNames.push(...Object.keys(mapSFFModel));
+
       for (const sheet of sheets.items) {
         if (sheetNames.includes(sheet.name)) {
-          // Add multi-select handler to the link fields on tables
+          // Add lookup multi-select handler to the link fields on tables
           const newClass = createInstance(sheet.name as ModelType | SFFModelType);
           const fields = newClass.getAllFields();
 
@@ -772,9 +916,9 @@ async function addMultiSelectHandlerToAllTables() {
           totalRows.load("count");
           await context.sync();
 
-          // Add multi-select functionality to link fields
+          // Add lookup multi-select functionality to link fields
           for (const field of fields) {
-            if (field.link) {
+            if (field.link || field.type === "multiselect") {
               const headerRange = sheet
                 .getUsedRange()
                 .find(field.displayName || field.name, { completeMatch: true, matchCase: true });
@@ -807,7 +951,11 @@ async function addMultiSelectHandlerToAllTables() {
 
               range.load("address");
               await context.sync();
-              addMultiSelectHandler(sheet, range.address);
+              if (field.type === "multiselect") {
+                await addMultiSelectHandler(sheet, range.address);
+              } else {
+                await addLookupMultiSelectHandler(sheet, range.address);
+              }
             }
           }
         }

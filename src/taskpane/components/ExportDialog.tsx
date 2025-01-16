@@ -16,14 +16,25 @@ import { exportData } from "../export/export";
 interface ExportDialogProps {
   isDialogOpen: boolean;
   setDialogOpen: (isOpen: boolean) => void;
+  setIslLoading: (isLoading: boolean) => void;
 }
 
-const ExportDialog: React.FC<ExportDialogProps> = ({ isDialogOpen, setDialogOpen }) => {
+const ExportDialog: React.FC<ExportDialogProps> = ({
+  isDialogOpen,
+  setDialogOpen,
+  setIslLoading,
+}) => {
   const { showDialog } = useDialogContext();
   const [inputValue, setInputValue] = useState("");
   const intl = useIntl();
 
   const handleExport = async () => {
+    // Set the loading state
+    setIslLoading(true);
+
+    // Close the dialog
+    setDialogOpen(false);
+
     // Clean the input value to make it compatible with all file systems
     const cleanedOrgName = inputValue.replace(/[^\w]/gi, "");
 
@@ -54,9 +65,9 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isDialogOpen, setDialogOpen
       );
     }
 
-    // Close the dialog
-    setDialogOpen(false);
+    // Reset the loading state and the
     setInputValue("");
+    setIslLoading(false);
   };
 
   return (

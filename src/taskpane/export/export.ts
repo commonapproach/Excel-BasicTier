@@ -3,6 +3,7 @@ import { IntlShape } from "react-intl";
 import { CodeList, getCodeListByTableName } from "../domain/codeLists/getCodeLists";
 import { TableInterface } from "../domain/interfaces/table.interface";
 import {
+  contextUrl,
   createInstance,
   ignoredFields,
   map,
@@ -94,7 +95,7 @@ export async function exportData(
         }
 
         let row: TableInterface = {
-          "@context": "http://ontology.commonapproach.org/contexts/cidsContext.json",
+          "@context": contextUrl,
           "@type": `cids:${table.name}`,
           "@id": "",
         };
@@ -148,6 +149,31 @@ export async function exportData(
             if (optionField) {
               row[field.name] =
                 field.representedType === "array" ? [optionField.id] : optionField.id;
+            } else {
+              row[field.name] = field.defaultValue;
+            }
+          } else if (field.type === "multiselect") {
+            const fieldValue = value ?? "";
+            const valuesArray =
+              typeof fieldValue === "string"
+                ? fieldValue.split(", ").filter((v) => v !== "" && v !== null && v !== undefined)
+                : [];
+            if (valuesArray.length > 0) {
+              isEmpty = false;
+            }
+            let optionFields = [];
+            if (field.getOptionsAsync) {
+              const options = await field.getOptionsAsync();
+              optionFields = options.filter((opt) => valuesArray.includes(opt.name));
+            } else {
+              optionFields =
+                field.selectOptions?.filter((opt) => valuesArray.includes(opt.name)) || [];
+            }
+            if (optionFields.length > 0) {
+              row[field.name] =
+                field.representedType === "array"
+                  ? optionFields.map((opt) => opt.id)
+                  : optionFields.map((opt) => opt.id);
             } else {
               row[field.name] = field.defaultValue;
             }
@@ -459,7 +485,7 @@ function getObjectFieldsRecursively(
 
   if (field.type === "object") {
     row[field.name] = {
-      "@context": "http://ontology.commonapproach.org/contexts/cidsContext.json",
+      "@context": contextUrl,
       "@type": field.objectType,
     };
 

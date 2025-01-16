@@ -85,7 +85,7 @@ export class OrganizationProfile extends Base {
       },
       {
         name: "localityServed",
-        type: "select",
+        type: "multiselect",
         representedType: "array",
         defaultValue: [],
         selectOptions: [],
@@ -100,7 +100,7 @@ export class OrganizationProfile extends Base {
       },
       {
         name: "provinceTerritoryServed",
-        type: "select",
+        type: "multiselect",
         representedType: "array",
         defaultValue: [],
         selectOptions: [],

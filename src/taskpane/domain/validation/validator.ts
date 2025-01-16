@@ -173,9 +173,19 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
       }
     }
 
-    // eslint-disable-next-line prefer-const
     for (let [fieldName, fieldValue] of Object.entries(data)) {
       if (fieldName === "@context" || fieldName === "@type") continue;
+      let fieldProps: FieldType | null = null;
+      try {
+        fieldProps = cid.getFieldByName(fieldName);
+      } catch (_) {
+        continue;
+      }
+
+      if (!fieldProps) {
+        continue;
+      }
+
       const tableFields = cid.getAllFields().map((field) => field.name);
       const fieldDisplayName = cid.getFieldByName(fieldName)?.displayName || fieldName;
 
@@ -187,17 +197,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
             break;
           }
         }
-      }
-
-      let fieldProps: FieldType | null = null;
-      try {
-        fieldProps = cid.getFieldByName(fieldName);
-      } catch (_) {
-        continue;
-      }
-
-      if (!fieldProps) {
-        continue;
       }
 
       if (Array.isArray(fieldValue)) {
@@ -234,7 +233,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
                 },
                 {
                   fieldName: fieldDisplayName,
-                  fieldValue: fieldValue as string,
+                  fieldValue: fieldValue ? fieldValue.toString() : "null",
                   tableName,
                   b: (str) => `<b>${str}</b>`,
                 }
@@ -312,6 +311,43 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
                     id: "validation.messages.warning.invalidSelectField",
                     defaultMessage:
                       "Field <b>{fieldName}</b> on table <b>{tableName}</b> has an invalid value.",
+                  },
+                  {
+                    fieldName: fieldDisplayName,
+                    tableName,
+                    b: (str) => `<b>${str}</b>`,
+                  }
+                )
+              );
+            }
+          }
+        }
+
+        if (fieldProps?.type === "multiselect") {
+          if (fieldProps.selectOptions || fieldProps.getOptionsAsync) {
+            let shouldWarn = false;
+            const selectedValues = Array.isArray(fieldValue) ? fieldValue : [fieldValue];
+            if (fieldProps.getOptionsAsync) {
+              const options = await fieldProps.getOptionsAsync();
+              selectedValues.forEach((value) => {
+                if (!options.find((op) => op.id === value)) {
+                  shouldWarn = true;
+                }
+              });
+            } else {
+              selectedValues.forEach((value) => {
+                if (!fieldProps.selectOptions?.find((op) => op.id === value)) {
+                  shouldWarn = true;
+                }
+              });
+            }
+            if (shouldWarn) {
+              validatorWarnings.add(
+                intl.formatMessage(
+                  {
+                    id: "validation.messages.warning.invalidSelectField",
+                    defaultMessage:
+                      "Field <b>{fieldName}</b> on table <b>{tableName}</b> has invalid values.",
                   },
                   {
                     fieldName: fieldDisplayName,
@@ -487,7 +523,7 @@ async function validateLinkedFields(
             {
               tableName,
               name: (data["org:hasLegalName"] || data["hasLegalName"] || data["hasName"]) as string,
-              fieldName: fieldName.substring(3),
+              fieldName,
               b: (str) => `<b>${str}</b>`,
             }
           )

@@ -1,9 +1,9 @@
 {
-  "name": "office-addin-taskpane-react",
+  "name": "common_approach-office-addin",
   "version": "0.0.1",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OfficeDev/Office-Addin-TaskPane-React.git"
+    "url": "https://github.com/commonapproach/Excel-BasicTier.git"
   },
   "license": "MIT",
   "config": {
@@ -32,6 +32,7 @@
     "@fluentui/react-icons": "^2.0.232",
     "core-js": "^3.36.0",
     "es6-promise": "^4.2.8",
+    "jsonld": "^8.3.2",
     "moment": "^2.30.1",
     "moment-timezone": "^0.5.46",
     "react": "^18.2.0",
@@ -44,6 +45,7 @@
     "@babel/preset-env": "^7.24.8",
     "@babel/preset-react": "^7.24.7",
     "@babel/preset-typescript": "^7.24.7",
+    "@types/jsonld": "^1.5.15",
     "@types/office-js": "^1.0.377",
     "@types/office-runtime": "^1.0.35",
     "@types/react": "^18.2.64",

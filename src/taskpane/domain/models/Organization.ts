@@ -50,7 +50,7 @@ export class Organization extends Base {
         unique: false,
         notNull: false,
         required: false,
-        semiRequired: true,
+        semiRequired: false,
       },
       {
         name: "hasOutcome",
@@ -61,7 +61,7 @@ export class Organization extends Base {
         unique: false,
         notNull: false,
         required: false,
-        semiRequired: true,
+        semiRequired: false,
       },
     ];
   }

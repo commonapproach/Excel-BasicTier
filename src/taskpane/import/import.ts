@@ -12,12 +12,12 @@ import { FieldType } from "../domain/models/Base";
 import { validate } from "../domain/validation/validator";
 import { createSFFModuleSheetsAndTables, createSheetsAndTables } from "../taskpane";
 
-/* global Excel console */
+/* global Excel */
 export async function importData(
   intl: IntlShape,
   jsonData: any,
   setDialogContent: (header: string, content: string, nextCallBack?: Function) => void,
-  setIsImporting: (value: boolean) => void
+  setIsLoading: (isLoading: boolean) => void
 ) {
   await Excel.run(async (context) => {
     if (validateIfEmptyFile(jsonData)) {
@@ -31,7 +31,6 @@ export async function importData(
           defaultMessage: "Table data is empty or not an array",
         })
       );
-      setIsImporting(false);
       return;
     }
 
@@ -46,9 +45,12 @@ export async function importData(
           defaultMessage: "All records must have an <b>@id</b> property.",
         })
       );
-      setIsImporting(false);
       return;
     }
+
+    // Commented out for now, as we dot not have the context for the JSON-LD
+    // eslint-disable-next-line no-param-reassign
+    // jsonData = await parseJsonLd(jsonData);
 
     // Remove duplicated links
     // eslint-disable-next-line no-param-reassign
@@ -113,13 +115,18 @@ export async function importData(
               defaultMessage: "<p>Do you want to import anyway?</p>",
             }),
             async () => {
-              await importFileData(intl, context, jsonData, setDialogContent, setIsImporting);
+              try {
+                setIsLoading(true);
+                await importFileData(intl, context, jsonData, setDialogContent);
+              } finally {
+                setIsLoading(false);
+              }
             }
           );
         }
       );
     } else {
-      await importFileData(intl, context, jsonData, setDialogContent, setIsImporting);
+      await importFileData(intl, context, jsonData, setDialogContent);
     }
   });
 }
@@ -128,8 +135,7 @@ async function importFileData(
   intl: IntlShape,
   context: Excel.RequestContext,
   jsonData: any,
-  setDialogContent: any,
-  setIsImporting: (v: boolean) => void
+  setDialogContent: any
 ) {
   setDialogContent(
     intl.formatMessage({
@@ -141,7 +147,6 @@ async function importFileData(
       defaultMessage: "Importing data...",
     })
   );
-  setIsImporting(true);
   try {
     // Ignore types/classes that are not recognized
     const fullMap = { ...map, ...mapSFFModel };
@@ -150,8 +155,6 @@ async function importFileData(
       : jsonData;
     await importByData(intl, context, filteredItems);
   } catch (error: any) {
-    console.log("error", error);
-    setIsImporting(false);
     setDialogContent(
       `${intl.formatMessage({
         id: "generics.error",
@@ -172,7 +175,6 @@ async function importFileData(
       defaultMessage: "Your data has been successfully imported.",
     })
   );
-  setIsImporting(false);
 }
 
 async function importByData(intl: IntlShape, context: Excel.RequestContext, jsonData: any) {
@@ -279,7 +281,7 @@ async function writeTable(
     // Create the record
     let record: { [key: string]: unknown } = {};
     Object.entries(data).forEach(async ([key, value]) => {
-      if (key !== "@type" && key !== "@context" && !checkIfFieldIsRecognized(tableName, key)) {
+      if (key === "@type" || key === "@context" || !checkIfFieldIsRecognized(tableName, key)) {
         return;
       }
 
@@ -305,14 +307,15 @@ async function writeTable(
           const field = cid.getFieldByName(key);
           const fieldName = field.displayName || field.name;
           let newValue: any = value;
-          if (newValue && field.type === "select") {
-            let options = [];
+          if (newValue && (field.type === "select" || field.type === "multiselect")) {
+            let options: { id: string; name: string }[] = [];
             if (field.getOptionsAsync) {
               options = await field.getOptionsAsync();
             } else {
-              options = field.selectOptions ?? [];
+              options = field.selectOptions as { id: string; name: string }[];
             }
             if (
+              field.type === "select" &&
               options.find((opt) => opt.id === (Array.isArray(newValue) ? newValue[0] : newValue))
             ) {
               const optionField = options.find(
@@ -322,6 +325,21 @@ async function writeTable(
                 newValue = optionField.name;
               } else {
                 newValue = null;
+              }
+            } else if (field.type === "multiselect") {
+              newValue = (newValue as string[]).map((val) => {
+                const optionField = options.find((opt) => opt.id === val);
+                if (optionField) {
+                  return optionField.name;
+                }
+                return null;
+              });
+              // Remove null values
+              newValue = newValue.filter((val: any) => val);
+              if (newValue.length === 0) {
+                newValue = null;
+              } else {
+                newValue = newValue.join(", ");
               }
             } else {
               newValue = null;
@@ -334,7 +352,12 @@ async function writeTable(
               newValue = false;
             }
           }
-          if (field.type !== "boolean" && field.type !== "select" && newValue) {
+          if (
+            field.type !== "boolean" &&
+            field.type !== "select" &&
+            field.type !== "multiselect" &&
+            newValue
+          ) {
             newValue = newValue.toString();
           }
           record[fieldName] = newValue;
@@ -406,7 +429,7 @@ async function writeTableLinked(
     for (let [key, value] of Object.entries(data)) {
       const cid = createInstance(tableName as ModelType | SFFModelType);
 
-      if (key !== "@type" && key !== "@context") {
+      if (key !== "@type" && key !== "@context" && checkIfFieldIsRecognized(tableName, key)) {
         const field = cid.getFieldByName(key);
         if (field) {
           record = findLinkFieldsRecursively(tableName, field, data, record);
@@ -450,7 +473,14 @@ async function writeTableLinked(
     // Update the linked tables
     for (const [key, value] of Object.entries(record)) {
       const cid = createInstance(tableName as ModelType | SFFModelType);
-      const field = cid.getFieldByName(key);
+
+      let field: FieldType | null = null;
+      try {
+        field = cid.getFieldByName(key);
+      } catch (_) {
+        continue;
+      }
+
       if (
         field.link &&
         field.link.table &&
@@ -631,7 +661,7 @@ function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[], intl
 
     classesSet.add(tableName);
     for (const key in data) {
-      if (!checkIfFieldIsRecognized(tableName, key) && key !== "@type" && key !== "@context") {
+      if (key !== "@type" && key !== "@context" && !checkIfFieldIsRecognized(tableName, key)) {
         warnings.push(
           `${intl.formatMessage(
             {
@@ -706,7 +736,12 @@ function transformObjectFieldIfWrongFormat(jsonData: TableInterface[]) {
         continue;
       }
 
-      if (key === "@type" || key === "@context" || key === "@id") {
+      if (
+        key === "@type" ||
+        key === "@context" ||
+        key === "@id" ||
+        !checkIfFieldIsRecognized(data["@type"].split(":")[1], key)
+      ) {
         continue;
       }
 

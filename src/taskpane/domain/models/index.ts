@@ -58,6 +58,8 @@ export function createInstance(
   return new Model();
 }
 
+export const contextUrl = "https://ontology.commonapproach.org/contexts/cidsContext.json";
+
 export const ignoredFields: { [key: string]: string[] } = {
   Organization: ["hasOrganizationProfile", "hasFundingStatus", "hasImpactReport"],
   Theme: ["hasOutcome"],
