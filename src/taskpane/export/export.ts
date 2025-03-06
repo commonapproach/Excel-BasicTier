@@ -1,6 +1,6 @@
 import moment from "moment-timezone";
 import { IntlShape } from "react-intl";
-import { CodeList, getCodeListByTableName } from "../domain/codeLists/getCodeLists";
+import { CodeList, getCodeListByTableName } from "../domain/fetchServer/getCodeLists";
 import { TableInterface } from "../domain/interfaces/table.interface";
 import {
   contextUrl,
@@ -29,6 +29,7 @@ export async function exportData(
     await context.sync();
     const tables = workbook.tables.items;
     const data: TableInterface[] = [];
+    const changeOnDefaultCodeListsWarning: string[] = []; // Array to store warnings about code list changes
 
     let fullMap = map;
 
@@ -43,10 +44,10 @@ export async function exportData(
     for (const [key] of Object.entries(fullMap)) {
       if (!tableNames.includes(key)) {
         setDialogContent(
-          `${intl.formatMessage({
+          intl.formatMessage({
             id: "generics.error",
             defaultMessage: "Error",
-          })}!`,
+          }),
           intl.formatMessage(
             {
               id: "export.messages.error.missingTable",
@@ -85,13 +86,98 @@ export async function exportData(
         record.load("values");
         await context.sync();
 
+        // Get the headers to map column indices to field names
+        const headers = tableHeaderRange.values[0];
+
         // Skip records that are defined in the common approach code lists
         if (
           codeList &&
           idColumnIndex !== -1 &&
           codeList.find((item) => item["@id"] === record.values[0][idColumnIndex])
         ) {
+          // Check if the record has changes compared to the code list item
+          const recordId = record.values[0][idColumnIndex];
+          const existingItem = codeList.find((item) => item["@id"] === recordId);
+
+          if (existingItem) {
+            let hasChanges = false;
+            for (const fieldName of Object.keys(existingItem)) {
+              const fieldIndex = headers.indexOf(fieldName);
+              if (fieldIndex !== -1) {
+                const recordValue = record.values[0][fieldIndex];
+                const existingValue = (existingItem as Record<string, any>)[fieldName];
+
+                // Compare values (simple comparison, might need refinement)
+                if (
+                  recordValue !== undefined &&
+                  recordValue !== null &&
+                  recordValue.toString() !== existingValue?.toString()
+                ) {
+                  hasChanges = true;
+                  break;
+                }
+              }
+            }
+
+            if (hasChanges) {
+              changeOnDefaultCodeListsWarning.push(
+                intl.formatMessage(
+                  {
+                    id: "export.messages.warning.codeListChangesIgnored",
+                    defaultMessage:
+                      "Changes made in the predefined code list item with @id <b>{id}</b> in table <b>{tableName}</b> will be ignored.",
+                  },
+                  {
+                    id: recordId,
+                    tableName: table.name,
+                    b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
+                  }
+                ) as string
+              );
+            }
+          }
           continue;
+        }
+
+        // Check if record is similar to code list item (all values match except @id)
+        if (codeList) {
+          const recordValues = record.values[0];
+
+          // Find a matching code list item where all fields except @id match
+          const similarItem = codeList.find((item) =>
+            Object.keys(item).every((key) => {
+              if (key === "@id") return true;
+
+              const fieldIndex = headers.indexOf(key);
+              if (fieldIndex === -1) return true;
+
+              const recordValue = recordValues[fieldIndex];
+              const existingValue = (item as Record<string, any>)[key];
+
+              return recordValue?.toString() === existingValue?.toString();
+            })
+          );
+
+          if (similarItem) {
+            const recordIdIndex = headers.indexOf("@id");
+            const recordId = recordIdIndex !== -1 ? recordValues[recordIdIndex] : "";
+
+            changeOnDefaultCodeListsWarning.push(
+              intl.formatMessage(
+                {
+                  id: "export.messages.warning.codeListSimilarItem",
+                  defaultMessage:
+                    "Record in table <b>{tableName}</b> with @id: <b>{recordId}</b> is similar to the predefined code list item with @id: <b>{codeListItemId}</b>.<br/>Please review the code list item before exporting, or a custom code list item will be exported.",
+                },
+                {
+                  codeListItemId: similarItem["@id"],
+                  recordId: recordId || "",
+                  tableName: table.name,
+                  b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
+                }
+              ) as string
+            );
+          }
         }
 
         let row: TableInterface = {
@@ -242,14 +328,26 @@ export async function exportData(
 
     const noExportingFields = await checkForNotExportedFields(intl, context);
     const emptyTableWarning = await checkForEmptyTables(intl, context);
-    const allWarnings = noExportingFields + warnings.join("<hr/>") + emptyTableWarning;
+
+    // Include the code list warnings in the warnings
+    let codeListWarnings: string[] = [];
+    if (changeOnDefaultCodeListsWarning.length > 0) {
+      codeListWarnings = changeOnDefaultCodeListsWarning;
+    }
+
+    const allWarnings = [
+      ...noExportingFields,
+      ...warnings,
+      ...emptyTableWarning,
+      ...codeListWarnings,
+    ].join("<hr/>");
 
     if (errors.length > 0) {
       setDialogContent(
-        `${intl.formatMessage({
+        intl.formatMessage({
           id: "generics.error",
           defaultMessage: "Error",
-        })}!`,
+        }),
         errors.map((item) => `<p>${item}</p>`).join("")
       );
       return;
@@ -257,17 +355,17 @@ export async function exportData(
 
     if (allWarnings.length > 0) {
       setDialogContent(
-        `${intl.formatMessage({
+        intl.formatMessage({
           id: "generics.warning",
           defaultMessage: "Warning",
-        })}!`,
+        }),
         allWarnings,
         () => {
           setDialogContent(
-            `${intl.formatMessage({
+            intl.formatMessage({
               id: "generics.warning",
               defaultMessage: "Warning",
-            })}!`,
+            }),
             intl.formatMessage({
               id: "export.messages.warning.continue",
               defaultMessage: "<p>Do you want to export anyway?</p>",
@@ -329,7 +427,7 @@ async function checkForNotExportedFields(intl: IntlShape, context: Excel.Request
   const tables = workbook.tables.items;
   const fullMap = { ...map, ...mapSFFModel };
 
-  let warnings = "";
+  let warnings: string[] = [];
   for (const table of tables) {
     if (!Object.keys(fullMap).includes(table.name)) {
       continue;
@@ -343,17 +441,22 @@ async function checkForNotExportedFields(intl: IntlShape, context: Excel.Request
     const tableHeadersValues = tableHeaderRange.values[0];
 
     for (const field of tableHeadersValues) {
-      if (Object.keys(fullMap).includes(field) || ignoredFields[table.name]?.includes(field)) {
+      if (
+        Object.keys(fullMap).includes(field) ||
+        (ignoredFields as any)[table.name]?.includes(field)
+      ) {
         continue;
       }
       if (!internalFields.includes(field)) {
-        warnings += intl.formatMessage(
-          {
-            id: "export.messages.warning.fieldWillNotBeExported",
-            defaultMessage:
-              "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be exported<hr/>",
-          },
-          { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` }
+        warnings.push(
+          intl.formatMessage(
+            {
+              id: "export.messages.warning.fieldWillNotBeExported",
+              defaultMessage:
+                "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be exported",
+            },
+            { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` }
+          ) as string
         );
       }
     }
@@ -368,7 +471,7 @@ async function checkForEmptyTables(intl: IntlShape, context: Excel.RequestContex
   const tables = workbook.tables.items;
   const fullMap = { ...map, ...mapSFFModel };
 
-  let warnings = "";
+  let warnings: string[] = [];
   for (const table of tables) {
     if (!Object.keys(fullMap).includes(table.name)) {
       continue;
@@ -387,15 +490,17 @@ async function checkForEmptyTables(intl: IntlShape, context: Excel.RequestContex
     }
 
     if (isEmpty) {
-      warnings += intl.formatMessage(
-        {
-          id: "export.messages.warning.emptyTable",
-          defaultMessage: "<hr/>Table <b>${tableName}</b> is empty<hr/>",
-        },
-        {
-          tableName: table.name,
-          b: (str) => `<b>${str}</b>`,
-        }
+      warnings.push(
+        intl.formatMessage(
+          {
+            id: "export.messages.warning.emptyTable",
+            defaultMessage: "<Table <b>${tableName}</b> is empty",
+          },
+          {
+            tableName: table.name,
+            b: (str) => `<b>${str}</b>`,
+          }
+        )
       );
     }
   }

@@ -64,6 +64,10 @@ async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
         sector.hasDescription = desc["cids:hasDescription"]["#text"]
           ? desc["cids:hasDescription"]["#text"].toString()
           : "";
+      } else if (desc["cids:hasDefinition"]) {
+        sector.hasDescription = desc["cids:hasDefinition"]["#text"]
+          ? desc["cids:hasDefinition"]["#text"].toString()
+          : "";
       }
 
       codeList.push(sector);

@@ -114,6 +114,14 @@ const DialogContextProvider: FC<DialogContextProviderProps> = ({ children }) => 
           <DialogBody>
             <DialogTitle>{dialogHeader}</DialogTitle>
             <DialogContent>
+              {(dialogHeader.includes("Error") || dialogHeader.includes("Erreur")) && (
+                <p style={{ fontSize: "12px", fontWeight: "bold", paddingLeft: 4 }}>
+                  <FormattedMessage
+                    id="generics.error.note"
+                    defaultMessage="The operation was interrupted. Please fix the issue before retrying."
+                  />
+                </p>
+              )}
               <p dangerouslySetInnerHTML={{ __html: dialogContent }} />
             </DialogContent>
 

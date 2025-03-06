@@ -1,7 +1,16 @@
+import moment from "moment";
 import { IntlShape } from "react-intl";
-import { getCodeListByTableName } from "../codeLists/getCodeLists";
+import { getCodeListByTableName } from "../fetchServer/getCodeLists";
+import { getContext } from "../fetchServer/getContext";
 import { TableInterface } from "../interfaces/table.interface";
-import { map, mapSFFModel, ModelType, predefinedCodeLists, SFFModelType } from "../models";
+import {
+  contextUrl,
+  map,
+  mapSFFModel,
+  ModelType,
+  predefinedCodeLists,
+  SFFModelType,
+} from "../models";
 import { FieldType } from "../models/Base";
 
 type Operation = "import" | "export";
@@ -208,7 +217,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
               {
                 id: "validation.messages.duplicateFieldValues",
                 defaultMessage:
-                  "Duplicate values in field <b>{fieldName}</b> on table <b>{tableName}</b}",
+                  "Duplicate values in field <b>{fieldName}</b> on table <b>{tableName}</b>",
               },
               {
                 fieldName: fieldDisplayName,
@@ -229,7 +238,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
                 {
                   id: "validation.messages.duplicateUniqueFieldValue",
                   defaultMessage:
-                    "Duplicate value for unique field <b>{fieldName}</b>: <b>{fieldValue}</b> in table <b>{tableName}</b}",
+                    "Duplicate value for unique field <b>{fieldName}</b>: <b>{fieldValue}</b> in table <b>{tableName}</b>",
                 },
                 {
                   fieldName: fieldDisplayName,
@@ -356,6 +365,119 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
                   }
                 )
               );
+            }
+          }
+        }
+
+        // Validate field values against context for basic types
+        // xsd:string, xsd:anyURI, xsd:nonNegativeNumber, xsd:boolean, xsd:date
+        // If the the field is in the context and has a @type property of one of this types
+        // we need to validate the value against the type, e.g if the field is a xsd:boolean the value should be true or false
+        const context: any = mapSFFModel[tableName as SFFModelType]
+          ? await getContext(contextUrl[1])
+          : await getContext(contextUrl[0]);
+        const fieldContext = context["@context"][fieldName];
+        if (fieldContext) {
+          const fieldType = fieldContext["@type"];
+          if (fieldType) {
+            const value = fieldValue;
+            if (value && fieldType === "xsd:string" && typeof value !== "string") {
+              validatorWarnings.add(
+                intl.formatMessage(
+                  {
+                    id: "validation.messages.warning.invalidStringType",
+                    defaultMessage:
+                      "The field <b>{fieldName}</b> in <b>{tableName}</b> must be text.",
+                  },
+                  {
+                    fieldName: fieldDisplayName,
+                    tableName,
+                    b: (str) => `<b>${str}</b>`,
+                  }
+                )
+              );
+              // set field value to default value
+              data[fieldName] = "";
+            } else if (value && fieldType === "xsd:anyURI") {
+              try {
+                if (typeof value !== "string") throw new Error();
+                new URL(value);
+              } catch (error) {
+                validatorWarnings.add(
+                  intl.formatMessage(
+                    {
+                      id: "validation.messages.warning.invalidUrlType",
+                      defaultMessage:
+                        "The field <b>{fieldName}</b> in <b>{tableName}</b> must be a valid URL.",
+                    },
+                    {
+                      fieldName: fieldDisplayName,
+                      tableName,
+                      b: (str) => `<b>${str}</b>`,
+                    }
+                  )
+                );
+              }
+            } else if (
+              value &&
+              (fieldType === "xsd:nonNegativeNumber" || fieldType === "xsd:nonNegativeInteger")
+            ) {
+              const numValue = +value;
+              if (isNaN(numValue) || !Number.isInteger(numValue) || numValue < 0) {
+                validatorWarnings.add(
+                  intl.formatMessage(
+                    {
+                      id: "validation.messages.warning.invalidNumberType",
+                      defaultMessage:
+                        "The field <b>{fieldName}</b> in <b>{tableName}</b> must be a whole number greater than or equal to 0.",
+                    },
+                    {
+                      fieldName: fieldDisplayName,
+                      tableName,
+                      b: (str) => `<b>${str}</b>`,
+                    }
+                  )
+                );
+              }
+            } else if (fieldType === "xsd:boolean" && typeof value !== "boolean") {
+              validatorWarnings.add(
+                intl.formatMessage(
+                  {
+                    id: "validation.messages.warning.invalidBooleanType",
+                    defaultMessage:
+                      "The field <b>{fieldName}</b> in <b>{tableName}</b> must be either true or false.",
+                  },
+                  {
+                    fieldName: fieldDisplayName,
+                    tableName,
+                    b: (str) => `<b>${str}</b>`,
+                  }
+                )
+              );
+              // set field value to default value
+              data[fieldName] = false;
+            } else if (value && fieldType === "xsd:date") {
+              const validDateFormats = ["YYYY-MM-DD", "YYYY-MM-DDTHH:mm:ssZ"];
+              const isValidDate = moment(value.toString(), validDateFormats, true).isValid();
+
+              if (!isValidDate) {
+                validatorWarnings.add(
+                  intl.formatMessage(
+                    {
+                      id: "validation.messages.warning.invalidDateFormat",
+                      defaultMessage:
+                        "The field <b>{fieldName}</b> in <b>{tableName}</b> must be a valid date in format YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ.",
+                    },
+                    {
+                      fieldName: fieldDisplayName,
+                      tableName,
+                      b: (str) => `<b>${str}</b>`,
+                    }
+                  )
+                );
+                // set field value to default value
+                data[fieldName] = "";
+              }
             }
           }
         }
@@ -623,7 +745,7 @@ async function validateLinkedFields(
 }
 
 function removeEmptyRows(tableData: TableInterface[]) {
-  return tableData.filter((item) => item["@id"].length > 0);
+  return tableData.filter((item) => item["@id"] && item["@id"].length > 0);
 }
 
 function validateIfIdIsValidUrl(

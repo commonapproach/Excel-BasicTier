@@ -1,8 +1,8 @@
 import { Base } from "./Base";
 import { Organization } from "./Organization";
 
-export class ImpactReport extends Base {
-  static className: string = "ImpactReport";
+export class ReportInfo extends Base {
+  static className: string = "ReportInfo";
 
   constructor() {
     super();
@@ -31,7 +31,7 @@ export class ImpactReport extends Base {
         type: "link",
         representedType: "string",
         defaultValue: "",
-        link: { table: Organization, field: "hasImpactReport" },
+        link: { table: Organization, field: "hasReportInfo" },
         unique: false,
         notNull: false,
         required: false,

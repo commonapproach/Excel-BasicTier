@@ -4,7 +4,6 @@ import { EDGProfile } from "./EDGProfile";
 import { EquityDeservingGroup } from "./EquityDeservingGroup";
 import { FundingState } from "./FundingState";
 import { FundingStatus } from "./FundingStatus";
-import { ImpactReport } from "./ImpactReport";
 import { Indicator } from "./Indicator";
 import { IndicatorReport } from "./IndicatorReport";
 import { Organization } from "./Organization";
@@ -12,6 +11,7 @@ import { OrganizationProfile } from "./OrganizationProfile";
 import { Outcome } from "./Outcome";
 import { Person } from "./Person";
 import { PopulationServed } from "./PopulationServed";
+import { ReportInfo } from "./ReportInfo";
 import { Sector } from "./Sector";
 import { TeamProfile } from "./TeamProfile";
 import { Theme } from "./Theme";
@@ -36,7 +36,7 @@ export const mapSFFModel = {
   FundingState: FundingState,
   Sector: Sector,
   PopulationServed: PopulationServed,
-  ImpactReport: ImpactReport,
+  ReportInfo: ReportInfo,
 };
 
 export type ModelType = keyof typeof map;
@@ -58,10 +58,14 @@ export function createInstance(
   return new Model();
 }
 
-export const contextUrl = "https://ontology.commonapproach.org/contexts/cidsContext.json";
+// The order matters here
+export const contextUrl = [
+  "https://ontology.commonapproach.org/cids.jsonld", // Base context
+  "https://ontology.commonapproach.org/sff-1.0.jsonld", // Extended context for SFF module
+];
 
-export const ignoredFields: { [key: string]: string[] } = {
-  Organization: ["hasOrganizationProfile", "hasFundingStatus", "hasImpactReport"],
+export const ignoredFields = {
+  Organization: ["hasOrganizationProfile", "hasFundingStatus", "hasReportInfo"],
   Theme: ["hasOutcome"],
   Address: ["forOrganization"],
   Person: ["forOrganizationProfile"],
@@ -96,9 +100,9 @@ export * from "./EDGProfile";
 export * from "./EquityDeservingGroup";
 export * from "./FundingState";
 export * from "./FundingStatus";
-export * from "./ImpactReport";
 export * from "./OrganizationProfile";
 export * from "./Person";
 export * from "./PopulationServed";
+export * from "./ReportInfo";
 export * from "./Sector";
 export * from "./TeamProfile";

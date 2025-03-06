@@ -11,6 +11,7 @@ import {
 import { FieldType } from "../domain/models/Base";
 import { validate } from "../domain/validation/validator";
 import { createSFFModuleSheetsAndTables, createSheetsAndTables } from "../taskpane";
+import { parseJsonLd } from "../utils/utils";
 
 /* global Excel */
 export async function importData(
@@ -22,10 +23,10 @@ export async function importData(
   await Excel.run(async (context) => {
     if (validateIfEmptyFile(jsonData)) {
       setDialogContent(
-        `${intl.formatMessage({
+        intl.formatMessage({
           id: "generics.error",
           defaultMessage: "Error",
-        })}!`,
+        }),
         intl.formatMessage({
           id: "import.messages.error.emptyOrNotArray",
           defaultMessage: "Table data is empty or not an array",
@@ -36,10 +37,10 @@ export async function importData(
 
     if (!doAllRecordsHaveId(jsonData)) {
       setDialogContent(
-        `${intl.formatMessage({
+        intl.formatMessage({
           id: "generics.error",
           defaultMessage: "Error",
-        })}!`,
+        }),
         intl.formatMessage({
           id: "import.messages.error.missingId",
           defaultMessage: "All records must have an <b>@id</b> property.",
@@ -48,9 +49,8 @@ export async function importData(
       return;
     }
 
-    // Commented out for now, as we dot not have the context for the JSON-LD
     // eslint-disable-next-line no-param-reassign
-    // jsonData = await parseJsonLd(jsonData);
+    jsonData = await parseJsonLd(jsonData);
 
     // Remove duplicated links
     // eslint-disable-next-line no-param-reassign
@@ -62,10 +62,10 @@ export async function importData(
     // Check if json data is a valid json array
     if (!Array.isArray(jsonData)) {
       setDialogContent(
-        `${intl.formatMessage({
+        intl.formatMessage({
           id: "generics.error",
           defaultMessage: "Error",
-        })}!`,
+        }),
         intl.formatMessage({
           id: "import.messages.error.invalidJson",
           defaultMessage: "Invalid JSON data, please check the data and try again.",
@@ -88,10 +88,10 @@ export async function importData(
 
     if (allErrors.length > 0) {
       setDialogContent(
-        `${intl.formatMessage({
+        intl.formatMessage({
           id: "generics.error",
           defaultMessage: "Error",
-        })}!`,
+        }),
         allErrors
       );
       return;
@@ -99,17 +99,17 @@ export async function importData(
 
     if (allWarnings.length > 0) {
       setDialogContent(
-        `${intl.formatMessage({
+        intl.formatMessage({
           id: "generics.warning",
           defaultMessage: "Warning",
-        })}!`,
+        }),
         allWarnings,
         () => {
           setDialogContent(
-            `${intl.formatMessage({
+            intl.formatMessage({
               id: "generics.warning",
               defaultMessage: "Warning",
-            })}!`,
+            }),
             intl.formatMessage({
               id: "import.messages.warning.continue",
               defaultMessage: "<p>Do you want to import anyway?</p>",
@@ -156,10 +156,10 @@ async function importFileData(
     await importByData(intl, context, filteredItems);
   } catch (error: any) {
     setDialogContent(
-      `${intl.formatMessage({
+      intl.formatMessage({
         id: "generics.error",
         defaultMessage: "Error",
-      })}!`,
+      }),
       error.message ||
         intl.formatMessage({ id: "generics.error.message", defaultMessage: "Something went wrong" })
     );
@@ -486,7 +486,7 @@ async function writeTableLinked(
         field.link.table &&
         tableName !== field.link.table.className &&
         (!(field.link.table.className in ignoredFields) ||
-          !ignoredFields[field.link.table.className].includes(field.link.field))
+          !(ignoredFields as any)[field.link.table.className].includes(field.link.field))
       ) {
         await updateLinkedTablesFields(
           context,
@@ -659,7 +659,6 @@ function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[], intl
       continue;
     }
 
-    classesSet.add(tableName);
     for (const key in data) {
       if (key !== "@type" && key !== "@context" && !checkIfFieldIsRecognized(tableName, key)) {
         warnings.push(
@@ -672,6 +671,7 @@ function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[], intl
             { tableName, fieldName: key, b: (str) => `<b>${str}</b>` }
           )}`
         );
+        classesSet.add(tableName);
       }
     }
   }

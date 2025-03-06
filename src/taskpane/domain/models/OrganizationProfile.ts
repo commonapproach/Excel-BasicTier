@@ -2,7 +2,7 @@ import {
   getAllLocalities,
   getAllOrganizationType,
   getAllProvinceTerritory,
-} from "../codeLists/getCodeLists";
+} from "../fetchServer/getCodeLists";
 import { Base } from "./Base";
 import { EquityDeservingGroup } from "./EquityDeservingGroup";
 import { FundingStatus } from "./FundingStatus";

@@ -1,5 +1,5 @@
 import { dialogHandler } from "./context/DialogContext";
-import { getCodeListByTableName } from "./domain/codeLists/getCodeLists";
+import { getCodeListByTableName } from "./domain/fetchServer/getCodeLists";
 import {
   createInstance,
   ignoredFields,
@@ -657,8 +657,10 @@ async function lookupMultiSelectEventHandler(
         for (const field of fields) {
           if (
             field.link &&
-            (!ignoredFields[field.link.table.className] ||
-              !ignoredFields[field.link.table.className].includes(field.link.field))
+            (!(ignoredFields as Record<string, any>)[field.link.table.className] ||
+              !(ignoredFields as Record<string, any>)[field.link.table.className].includes(
+                field.link.field
+              ))
           ) {
             await updateRelatedFieldsValues(
               context,
@@ -773,8 +775,10 @@ async function lookupMultiSelectEventHandler(
 
         if (
           field.link.table.className !== activeSheet.name &&
-          (!ignoredFields[field.link.table.className] ||
-            !ignoredFields[field.link.table.className].includes(field.link.field))
+          (!(ignoredFields as Record<string, any>)[field.link.table.className] ||
+            !(ignoredFields as Record<string, any>)[field.link.table.className].includes(
+              field.link.field
+            ))
         ) {
           await handleLinkedFieldsInRelatedSheet(
             context,
