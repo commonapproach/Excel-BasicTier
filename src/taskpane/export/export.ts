@@ -61,42 +61,61 @@ export async function exportData(
       }
     }
 
-    for (const table of tables) {
-      // If the table is not in the map, skip it
-      if (!Object.keys(fullMap).includes(table.name)) {
-        continue;
-      }
+    // Pre-fetch all code lists we'll need in one batch
+    const codeListCache: Record<string, CodeList[]> = {};
+    const codeListPromises = predefinedCodeLists
+      .filter(tableNames.includes.bind(tableNames))
+      .map(async (tableName) => {
+        codeListCache[tableName] = await getCodeListByTableName(tableName);
+      });
 
-      // Get the records from the table
+    await Promise.all(codeListPromises);
+
+    // First, prepare all the table objects we'll work with and queue all load operations
+    const tablesToProcess = tables.filter((table) => Object.keys(fullMap).includes(table.name));
+    const tableInfos = tablesToProcess.map((table) => {
       const tableRange = table.getRange();
       const tableHeaderRange = tableRange.getRow(0);
+
+      // Load all the properties we'll need
       tableHeaderRange.load("values");
-      table.load("values, rows");
-      await context.sync();
-      const records = table.rows.items;
-      const idColumnIndex = tableHeaderRange.values[0].indexOf("@id");
+      table.load("name");
 
-      let codeList: CodeList[] | null = null;
-      if (predefinedCodeLists.includes(table.name)) {
-        codeList = await getCodeListByTableName(table.name);
-      }
+      // For data, we need to load the data body range separately
+      const dataBodyRange = table.getDataBodyRange();
+      dataBodyRange?.load("values");
 
+      return {
+        table,
+        tableHeaderRange,
+        dataBodyRange,
+        codeList: codeListCache[table.name],
+      };
+    });
+
+    // Execute a single sync to load all data
+    await context.sync();
+
+    // Now process each table with loaded data
+    for (const { table, tableHeaderRange, dataBodyRange, codeList } of tableInfos) {
+      if (!dataBodyRange) continue; // Skip if no data (empty table)
+
+      const headers = tableHeaderRange.values[0];
+      const records = dataBodyRange.values;
+      const idColumnIndex = headers.indexOf("@id");
       const cid: BaseModel = createInstance(table.name as ModelType | SFFModelType);
-      for (const record of records) {
-        record.load("values");
-        await context.sync();
+      const tableFields = cid.getTopLevelFields();
 
-        // Get the headers to map column indices to field names
-        const headers = tableHeaderRange.values[0];
-
+      // Process all records for this table
+      for (const recordValues of records) {
         // Skip records that are defined in the common approach code lists
         if (
           codeList &&
           idColumnIndex !== -1 &&
-          codeList.find((item) => item["@id"] === record.values[0][idColumnIndex])
+          codeList.find((item) => item["@id"] === recordValues[idColumnIndex])
         ) {
           // Check if the record has changes compared to the code list item
-          const recordId = record.values[0][idColumnIndex];
+          const recordId = recordValues[idColumnIndex];
           const existingItem = codeList.find((item) => item["@id"] === recordId);
 
           if (existingItem) {
@@ -104,10 +123,10 @@ export async function exportData(
             for (const fieldName of Object.keys(existingItem)) {
               const fieldIndex = headers.indexOf(fieldName);
               if (fieldIndex !== -1) {
-                const recordValue = record.values[0][fieldIndex];
+                const recordValue = recordValues[fieldIndex];
                 const existingValue = (existingItem as Record<string, any>)[fieldName];
 
-                // Compare values (simple comparison, might need refinement)
+                // Compare values
                 if (
                   recordValue !== undefined &&
                   recordValue !== null &&
@@ -141,8 +160,6 @@ export async function exportData(
 
         // Check if record is similar to code list item (all values match except @id)
         if (codeList) {
-          const recordValues = record.values[0];
-
           // Find a matching code list item where all fields except @id match
           const similarItem = codeList.find((item) =>
             Object.keys(item).every((key) => {
@@ -188,158 +205,29 @@ export async function exportData(
 
         let isEmpty = true; // Flag to check if the row is empty
 
-        for (const field of cid.getTopLevelFields()) {
-          const columnIndex = tableHeaderRange.values[0].indexOf(field.displayName || field.name);
-          const value: any = record.values[0][columnIndex];
-          if (field.type === "link") {
-            if (field.representedType === "array") {
-              const fieldValue = value ?? field?.defaultValue;
-              if (fieldValue && fieldValue.length > 0) {
-                isEmpty = false;
-              }
-              row[field.name] =
-                typeof fieldValue === "string"
-                  ? fieldValue.split(", ").filter((v) => v !== "" && v !== null && v !== undefined)
-                  : (fieldValue as string[]).filter(
-                      (v) => v !== "" && v !== null && v !== undefined
-                    );
-            } else if (field.representedType === "string") {
-              const fieldValue = value ?? field?.defaultValue;
-              if (fieldValue) {
-                isEmpty = false;
-              }
-              row[field.name] = Array.isArray(fieldValue) ? fieldValue[0] : fieldValue;
-            }
-          } else if (field.type === "object") {
-            const [newRow, newIsEmpty] = getObjectFieldsRecursively(
-              tableHeaderRange.values[0],
-              record.values[0],
-              field,
-              row,
-              isEmpty
-            );
-            row = { ...row, ...newRow };
-            isEmpty = newIsEmpty;
-          } else if (field.type === "select") {
-            const fieldValue = value ?? "";
-            if (fieldValue) {
-              isEmpty = false;
-            }
-            let optionField;
-            if (field.getOptionsAsync) {
-              const options = await field.getOptionsAsync();
-              optionField = options.find((opt) => opt.name === fieldValue);
-            } else {
-              optionField = field.selectOptions?.find((opt) => opt.name === fieldValue);
-            }
-            if (optionField) {
-              row[field.name] =
-                field.representedType === "array" ? [optionField.id] : optionField.id;
-            } else {
-              row[field.name] = field.defaultValue;
-            }
-          } else if (field.type === "multiselect") {
-            const fieldValue = value ?? "";
-            const valuesArray =
-              typeof fieldValue === "string"
-                ? fieldValue.split(", ").filter((v) => v !== "" && v !== null && v !== undefined)
-                : [];
-            if (valuesArray.length > 0) {
-              isEmpty = false;
-            }
-            let optionFields = [];
-            if (field.getOptionsAsync) {
-              const options = await field.getOptionsAsync();
-              optionFields = options.filter((opt) => valuesArray.includes(opt.name));
-            } else {
-              optionFields =
-                field.selectOptions?.filter((opt) => valuesArray.includes(opt.name)) || [];
-            }
-            if (optionFields.length > 0) {
-              row[field.name] =
-                field.representedType === "array"
-                  ? optionFields.map((opt) => opt.id)
-                  : optionFields.map((opt) => opt.id);
-            } else {
-              row[field.name] = field.defaultValue;
-            }
-          } else if (field.type === "datetime") {
-            let fieldValue = value ?? "";
-            if (fieldValue && (typeof fieldValue === "string" || typeof fieldValue === "number")) {
-              isEmpty = false;
-
-              if (typeof fieldValue === "number") {
-                // convert excel int date to date
-                fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
-              }
-
-              // get local timezone
-              const localTimezone = moment.tz.guess();
-              const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DDTHH:mm:ssZ");
-
-              row[field.name] = date;
-            } else {
-              row[field.name] = "";
-            }
-          } else if (field.type === "date") {
-            let fieldValue = value ?? "";
-            if (fieldValue && (typeof fieldValue === "string" || typeof fieldValue === "number")) {
-              isEmpty = false;
-
-              if (typeof fieldValue === "number") {
-                // convert excel int date to date
-                fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
-              }
-
-              // get local timezone
-              const localTimezone = moment.tz.guess();
-              const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DD");
-
-              row[field.name] = date;
-            } else {
-              row[field.name] = "";
-            }
-          } else if (field.type === "boolean") {
-            const fieldValue = value ?? false;
-            row[field.name] = fieldValue ? true : false;
-          } else {
-            const fieldValue = value ?? "";
-            if (fieldValue || fieldValue === 0) {
-              isEmpty = false;
-            }
-            let exportValue = fieldValue;
-            if (Array.isArray(fieldValue) && field.representedType === "array") {
-              exportValue = fieldValue;
-            } else if (!Array.isArray(fieldValue) && field.representedType === "array") {
-              exportValue = fieldValue ? [fieldValue] : field.defaultValue;
-            } else {
-              exportValue = fieldValue.toString() || field.defaultValue;
-            }
-            row[field.name] = exportValue;
+        // Process all fields in one pass using the cached headers
+        await processRecord(tableFields, headers, recordValues, row, isEmpty).then((result) => {
+          const [processedRow, rowIsEmpty] = result;
+          if (!rowIsEmpty) {
+            data.push(processedRow);
           }
-        }
-        if (!isEmpty) {
-          data.push(row);
-        }
+        });
       }
     }
 
     const { errors, warnings } = await validate(data, "export", intl);
 
-    const noExportingFields = await checkForNotExportedFields(intl, context);
-    const emptyTableWarning = await checkForEmptyTables(intl, context);
+    // Load all data for validation checks at once
+    const warningCheckData = await loadDataForWarnings(intl, context, tables, fullMap);
+    const noExportingFields = warningCheckData.notExportedFields;
+    const emptyTableWarning = warningCheckData.emptyTableWarnings;
 
     // Include the code list warnings in the warnings
-    let codeListWarnings: string[] = [];
-    if (changeOnDefaultCodeListsWarning.length > 0) {
-      codeListWarnings = changeOnDefaultCodeListsWarning;
-    }
-
     const allWarnings = [
       ...noExportingFields,
       ...warnings,
       ...emptyTableWarning,
-      ...codeListWarnings,
+      ...changeOnDefaultCodeListsWarning,
     ].join("<hr/>");
 
     if (errors.length > 0) {
@@ -402,6 +290,258 @@ export async function exportData(
   });
 }
 
+// Load all data needed for warning checks in a single batch
+async function loadDataForWarnings(
+  intl: IntlShape,
+  context: Excel.RequestContext,
+  tables: Excel.Table[],
+  fullMap: any
+) {
+  const relevantTables = tables.filter((table) => Object.keys(fullMap).includes(table.name));
+
+  // Queue loads for all header ranges and data ranges
+  const tableData = relevantTables.map((table) => {
+    const headerRange = table.getHeaderRowRange();
+    headerRange.load("values");
+
+    const dataRange = table.getDataBodyRange();
+    // Only load if the range exists (not an empty table)
+    if (dataRange) {
+      dataRange.load("values");
+    }
+
+    const cid = createInstance(table.name as ModelType | SFFModelType);
+    const internalFields = cid.getAllFields().map((item) => item.displayName || item.name);
+
+    return {
+      table,
+      headerRange,
+      dataRange,
+      internalFields,
+    };
+  });
+
+  // Execute a single sync for all loads
+  await context.sync();
+
+  // Process the loaded data
+  const notExportedFields: string[] = [];
+  const emptyTableWarnings: string[] = [];
+
+  for (const { table, headerRange, dataRange, internalFields } of tableData) {
+    // Process header information for not exported fields
+    const headers = headerRange.values[0];
+    for (const field of headers) {
+      if (
+        Object.keys(fullMap).includes(field) ||
+        (ignoredFields as any)[table.name]?.includes(field)
+      ) {
+        continue;
+      }
+      if (!internalFields.includes(field)) {
+        notExportedFields.push(
+          intl.formatMessage(
+            {
+              id: "export.messages.warning.fieldWillNotBeExported",
+              defaultMessage:
+                "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be exported",
+            },
+            { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` }
+          ) as string
+        );
+      }
+    }
+
+    // Process data range for empty tables
+    if (dataRange) {
+      const values = dataRange.values;
+      let isEmpty = true;
+
+      for (const row of values) {
+        if (row.some((cell) => cell)) {
+          isEmpty = false;
+          break;
+        }
+      }
+
+      if (isEmpty) {
+        emptyTableWarnings.push(
+          intl.formatMessage(
+            {
+              id: "export.messages.warning.emptyTable",
+              defaultMessage: "<Table <b>${tableName}</b> is empty",
+            },
+            {
+              tableName: table.name,
+              b: (str) => `<b>${str}</b>`,
+            }
+          )
+        );
+      }
+    } else {
+      // If dataRange doesn't exist, the table is empty
+      emptyTableWarnings.push(
+        intl.formatMessage(
+          {
+            id: "export.messages.warning.emptyTable",
+            defaultMessage: "<Table <b>${tableName}</b> is empty",
+          },
+          {
+            tableName: table.name,
+            b: (str) => `<b>${str}</b>`,
+          }
+        )
+      );
+    }
+  }
+
+  return {
+    notExportedFields,
+    emptyTableWarnings,
+  };
+}
+
+// New helper function to process records more efficiently
+/* eslint-disable no-param-reassign */
+async function processRecord(
+  fields: FieldType[],
+  headers: string[],
+  recordValues: any[],
+  row: TableInterface,
+  isEmpty: boolean
+): Promise<[TableInterface, boolean]> {
+  for (const field of fields) {
+    const columnIndex = headers.indexOf(field.displayName || field.name);
+    const value = recordValues[columnIndex];
+
+    if (field.type === "link") {
+      if (field.representedType === "array") {
+        const fieldValue = value ?? field?.defaultValue;
+        if (fieldValue && fieldValue.length > 0) {
+          isEmpty = false;
+        }
+        row[field.name] =
+          typeof fieldValue === "string"
+            ? fieldValue.split(", ").filter((v) => v !== "" && v !== null && v !== undefined)
+            : (fieldValue as string[]).filter((v) => v !== "" && v !== null && v !== undefined);
+      } else if (field.representedType === "string") {
+        const fieldValue = value ?? field?.defaultValue;
+        if (fieldValue) {
+          isEmpty = false;
+        }
+        row[field.name] = Array.isArray(fieldValue) ? fieldValue[0] : fieldValue;
+      }
+    } else if (field.type === "object") {
+      const [newRow, newIsEmpty] = await getObjectFieldsRecursively(
+        headers,
+        recordValues,
+        field,
+        row,
+        isEmpty
+      );
+      row = { ...row, ...newRow };
+      isEmpty = newIsEmpty;
+    } else if (field.type === "select") {
+      const fieldValue = value ?? "";
+      if (fieldValue) {
+        isEmpty = false;
+      }
+      let optionField;
+      if (field.getOptionsAsync) {
+        const options = await field.getOptionsAsync();
+        optionField = options.find((opt) => opt.name === fieldValue);
+      } else {
+        optionField = field.selectOptions?.find((opt) => opt.name === fieldValue);
+      }
+      if (optionField) {
+        row[field.name] = field.representedType === "array" ? [optionField.id] : optionField.id;
+      } else {
+        row[field.name] = field.defaultValue;
+      }
+    } else if (field.type === "multiselect") {
+      const fieldValue = value ?? "";
+      const valuesArray =
+        typeof fieldValue === "string"
+          ? fieldValue.split(", ").filter((v) => v !== "" && v !== null && v !== undefined)
+          : [];
+      if (valuesArray.length > 0) {
+        isEmpty = false;
+      }
+      let optionFields = [];
+      if (field.getOptionsAsync) {
+        const options = await field.getOptionsAsync();
+        optionFields = options.filter((opt) => valuesArray.includes(opt.name));
+      } else {
+        optionFields = field.selectOptions?.filter((opt) => valuesArray.includes(opt.name)) || [];
+      }
+      if (optionFields.length > 0) {
+        row[field.name] =
+          field.representedType === "array"
+            ? optionFields.map((opt) => opt.id)
+            : optionFields.map((opt) => opt.id);
+      } else {
+        row[field.name] = field.defaultValue;
+      }
+    } else if (field.type === "datetime") {
+      let fieldValue = value ?? "";
+      if (fieldValue && (typeof fieldValue === "string" || typeof fieldValue === "number")) {
+        isEmpty = false;
+
+        if (typeof fieldValue === "number") {
+          // convert excel int date to date
+          fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
+        }
+
+        // get local timezone
+        const localTimezone = moment.tz.guess();
+        const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DDTHH:mm:ssZ");
+
+        row[field.name] = date;
+      } else {
+        row[field.name] = "";
+      }
+    } else if (field.type === "date") {
+      let fieldValue = value ?? "";
+      if (fieldValue && (typeof fieldValue === "string" || typeof fieldValue === "number")) {
+        isEmpty = false;
+
+        if (typeof fieldValue === "number") {
+          // convert excel int date to date
+          fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
+        }
+
+        // get local timezone
+        const localTimezone = moment.tz.guess();
+        const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DD");
+
+        row[field.name] = date;
+      } else {
+        row[field.name] = "";
+      }
+    } else if (field.type === "boolean") {
+      const fieldValue = value ?? false;
+      row[field.name] = fieldValue ? true : false;
+    } else {
+      const fieldValue = value ?? "";
+      if (fieldValue || fieldValue === 0) {
+        isEmpty = false;
+      }
+      let exportValue = fieldValue;
+      if (Array.isArray(fieldValue) && field.representedType === "array") {
+        exportValue = fieldValue;
+      } else if (!Array.isArray(fieldValue) && field.representedType === "array") {
+        exportValue = fieldValue ? [fieldValue] : field.defaultValue;
+      } else {
+        exportValue = fieldValue.toString() || field.defaultValue;
+      }
+      row[field.name] = exportValue;
+    }
+  }
+
+  return [row, isEmpty];
+}
+/* eslint-enable no-param-reassign */
+
 function getFileName(orgName: string): string {
   const date = new Date();
 
@@ -420,104 +560,17 @@ function getFileName(orgName: string): string {
   return `CIDSBasic${orgName}${timestamp}`;
 }
 
-async function checkForNotExportedFields(intl: IntlShape, context: Excel.RequestContext) {
-  const workbook = context.workbook;
-  workbook.load("tables");
-  await context.sync();
-  const tables = workbook.tables.items;
-  const fullMap = { ...map, ...mapSFFModel };
-
-  let warnings: string[] = [];
-  for (const table of tables) {
-    if (!Object.keys(fullMap).includes(table.name)) {
-      continue;
-    }
-    const cid = createInstance(table.name as ModelType | SFFModelType);
-    const internalFields = cid.getAllFields().map((item) => item.displayName || item.name);
-
-    const tableHeaderRange = table.getHeaderRowRange();
-    tableHeaderRange.load("values");
-    await context.sync();
-    const tableHeadersValues = tableHeaderRange.values[0];
-
-    for (const field of tableHeadersValues) {
-      if (
-        Object.keys(fullMap).includes(field) ||
-        (ignoredFields as any)[table.name]?.includes(field)
-      ) {
-        continue;
-      }
-      if (!internalFields.includes(field)) {
-        warnings.push(
-          intl.formatMessage(
-            {
-              id: "export.messages.warning.fieldWillNotBeExported",
-              defaultMessage:
-                "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be exported",
-            },
-            { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` }
-          ) as string
-        );
-      }
-    }
-  }
-  return warnings;
-}
-
-async function checkForEmptyTables(intl: IntlShape, context: Excel.RequestContext) {
-  const workbook = context.workbook;
-  workbook.load("tables");
-  await context.sync();
-  const tables = workbook.tables.items;
-  const fullMap = { ...map, ...mapSFFModel };
-
-  let warnings: string[] = [];
-  for (const table of tables) {
-    if (!Object.keys(fullMap).includes(table.name)) {
-      continue;
-    }
-
-    const tableDataRange = table.getDataBodyRange();
-    tableDataRange.load("values");
-    await context.sync();
-    const tableData = tableDataRange.values;
-
-    let isEmpty = true;
-    for (const row of tableData) {
-      for (const cell of row) {
-        if (cell) isEmpty = false;
-      }
-    }
-
-    if (isEmpty) {
-      warnings.push(
-        intl.formatMessage(
-          {
-            id: "export.messages.warning.emptyTable",
-            defaultMessage: "<Table <b>${tableName}</b> is empty",
-          },
-          {
-            tableName: table.name,
-            b: (str) => `<b>${str}</b>`,
-          }
-        )
-      );
-    }
-  }
-  return warnings;
-}
-
 /* eslint-disable no-param-reassign */
-function getObjectFieldsRecursively(
+async function getObjectFieldsRecursively(
   headers: string[],
-  value: any,
+  values: any[],
   field: FieldType,
   row: any,
   isEmpty: boolean
 ) {
   if (field.type !== "object") {
     const columnIndex = headers.indexOf(field.displayName || field.name);
-    const fieldValueOnTable = value[columnIndex];
+    const fieldValueOnTable = values[columnIndex];
     if (field.type === "link") {
       if (field.representedType === "array") {
         const fieldValue = fieldValueOnTable ?? field?.defaultValue;
@@ -596,9 +649,9 @@ function getObjectFieldsRecursively(
 
     for (const property of field.properties || []) {
       // Call the function recursively
-      const [newRow, newIsEmpty] = getObjectFieldsRecursively(
+      const [newRow, newIsEmpty] = await getObjectFieldsRecursively(
         headers,
-        value,
+        values,
         property,
         row[field.name],
         isEmpty

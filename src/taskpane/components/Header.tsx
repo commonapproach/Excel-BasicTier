@@ -1,3 +1,4 @@
+/* global console, fetch, window, document */
 import { Image, makeStyles, tokens } from "@fluentui/react-components";
 import * as React from "react";
 import { FormattedMessage } from "react-intl";
@@ -44,10 +45,40 @@ const useStyles = makeStyles({
     marginTop: "0px",
     marginBottom: "10px",
   },
+  link: {
+    cursor: "pointer",
+    color: tokens.colorBrandForeground1,
+    textDecoration: "underline",
+  },
 });
 
 const Header: React.FC<HeaderProps> = () => {
   const styles = useStyles();
+
+  const downloadSampleData = async (event: React.MouseEvent) => {
+    event.preventDefault();
+    try {
+      const url =
+        "https://ontology.commonapproach.org/examples/CIDSBasicZerokitsTestData-SHARED.json";
+      const response = await fetch(url);
+      const data = await response.blob();
+
+      // Create a blob URL and trigger download
+      const blobUrl = window.URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = blobUrl;
+      a.download = "CIDSBasicZerokitsTestData-SHARED.json";
+      document.body.appendChild(a);
+      a.click();
+
+      // Clean up
+      window.URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Error downloading sample data:", error);
+    }
+  };
 
   return (
     <section className={styles.welcome__header}>
@@ -74,16 +105,18 @@ const Header: React.FC<HeaderProps> = () => {
           defaultMessage="New user? Try importing this"
         />{" "}
         &nbsp;
-        <a
-          href="https://ontology.commonapproach.org/examples/CIDSBasicZerokitsTestData-SHARED.json"
-          rel="noreferrer"
-          download="CIDSBasicZerokitsTestData-SHARED.json"
+        <span
+          aria-label="sample data file"
+          className={styles.link}
+          onClick={downloadSampleData}
+          role="button"
+          tabIndex={0}
         >
           <FormattedMessage
             id="app.link.sampleData"
             defaultMessage="sample data file"
           />
-        </a>
+        </span>
       </p>
       <p className={styles.warning_note}>
         <FormattedMessage
