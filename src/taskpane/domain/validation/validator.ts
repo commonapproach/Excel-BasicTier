@@ -232,7 +232,15 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
       if (fieldProps.type !== "object") {
         // Validate unique fields
         if (fieldProps?.unique) {
-          if (!validateUnique(tableName, fieldName, fieldValue, uniqueRecords, id, intl)) {
+          const uniqueResult = validateUnique(
+            tableName,
+            fieldName,
+            fieldValue,
+            uniqueRecords,
+            id,
+            intl
+          );
+          if (!uniqueResult.isUnique && uniqueResult.reason === "duplicate") {
             const msg = intl
               .formatMessage(
                 {
@@ -493,9 +501,9 @@ function validateUnique(
   uniqueRecords: Record<string, Set<any>>,
   id: string,
   intl: IntlShape
-): boolean {
+): { isUnique: boolean; reason?: "invalidUrl" | "duplicate" } {
   // Unique key for this field in the format "tableName.fieldName"
-  if (!id) return false;
+  if (!id) return { isUnique: false, reason: "duplicate" };
   let urlObject;
 
   try {
@@ -515,7 +523,7 @@ function validateUnique(
         }
       )
     );
-    return false;
+    return { isUnique: false, reason: "invalidUrl" };
   }
 
   const baseUrl = `${urlObject.protocol}//${urlObject.hostname}`;
@@ -531,11 +539,11 @@ function validateUnique(
   // Check if the value already exists
   if (uniqueRecords[uniqueKey].has(fieldValue)) {
     // Value is not unique
-    return false;
+    return { isUnique: false, reason: "duplicate" };
   } else {
     // Record this value as encountered and return true
     uniqueRecords[uniqueKey].add(fieldValue);
-    return true;
+    return { isUnique: true };
   }
 }
 

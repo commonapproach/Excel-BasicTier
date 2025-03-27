@@ -1,3 +1,5 @@
+/* global Office Excel setTimeout clearTimeout console */
+import { IntlShape } from "react-intl";
 import { dialogHandler } from "./context/DialogContext";
 import { getCodeListByTableName } from "./domain/fetchServer/getCodeLists";
 import {
@@ -9,6 +11,8 @@ import {
   predefinedCodeLists,
   SFFModelType,
 } from "./domain/models";
+import { createHiddenTables } from "./helpers/createHiddenTables";
+import { createTable } from "./helpers/createTables";
 import {
   isCellInRange as importedCellInRange,
   processMultiSelectValue,
@@ -35,6 +39,25 @@ let pendingOperations = false; // New flag to track operations in progress
 const registeredHandlers = new Map<string, { remove: () => void }>();
 const SILENT_MODE_COOLDOWN = 2000; // 2 seconds cooldown after operations
 const HANDLER_REGISTRATION_DELAY = SILENT_MODE_COOLDOWN * 1.5; // 3 seconds for event handler registration
+
+// Add debounce utility at the top with other utility functions
+const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function debounce(key: string, func: Function, wait: number) {
+  // Cancel previous timer for this key if it exists
+  if (debounceTimers.has(key)) {
+    clearTimeout(debounceTimers.get(key)!);
+    debounceTimers.delete(key);
+  }
+
+  // Set new timer
+  const timer = setTimeout(() => {
+    func();
+    debounceTimers.delete(key);
+  }, wait);
+
+  debounceTimers.set(key, timer);
+}
 
 // Enhanced silent mode with more aggressive protection
 function enableSilentMode() {
@@ -79,7 +102,6 @@ async function cleanupAllEventHandlers(context: Excel.RequestContext) {
   }
 }
 
-/* global Office */
 Office.onReady(() => {
   // If needed, Office.js is ready to be called.
 
@@ -89,9 +111,7 @@ Office.onReady(() => {
   }
 });
 
-/* global Excel console setTimeout */
-
-export async function createSheetsAndTables() {
+export async function createSheetsAndTables(intl: IntlShape) {
   enableSilentMode(); // Enable silent mode before operations
   try {
     await Excel.run(async (context) => {
@@ -134,11 +154,7 @@ export async function createSheetsAndTables() {
 
         // Create all tables sequentially instead of in parallel to avoid sync issues
         for (const sheetName of Object.keys(map)) {
-          try {
-            await createTable(context, sheetName as ModelType);
-          } catch (error) {
-            console.error(`Error creating table ${sheetName}: ${error}`);
-          }
+          await createTable(context, sheetName as ModelType, intl);
         }
 
         // KEY FIX: Create tables only for StreetType and StreetDirection
@@ -188,6 +204,7 @@ export async function createSheetsAndTables() {
         await populateSelectLists();
       } catch (error) {
         console.error("Error: " + error);
+        throw error;
       }
     });
   } finally {
@@ -196,7 +213,7 @@ export async function createSheetsAndTables() {
 }
 
 // Modify createSFFModuleSheetsAndTables to use try/catch for each step
-export async function createSFFModuleSheetsAndTables() {
+export async function createSFFModuleSheetsAndTables(intl: IntlShape) {
   enableSilentMode();
   try {
     await Excel.run(async (context) => {
@@ -243,19 +260,11 @@ export async function createSFFModuleSheetsAndTables() {
 
         // Process tables in a fixed sequence to avoid overlaps
         for (const sheetName of Object.keys(map)) {
-          try {
-            await createTable(context, sheetName as ModelType);
-          } catch (error) {
-            console.error(`Error creating table for ${sheetName}, continuing: ${error}`);
-          }
+          await createTable(context, sheetName as ModelType, intl);
         }
 
         for (const sheetName of Object.keys(mapSFFModel)) {
-          try {
-            await createTable(context, sheetName as SFFModelType);
-          } catch (error) {
-            console.error(`Error creating table for ${sheetName}, continuing: ${error}`);
-          }
+          await createTable(context, sheetName as SFFModelType, intl);
         }
 
         for (const hidden of hiddenSheets) {
@@ -292,6 +301,7 @@ export async function createSFFModuleSheetsAndTables() {
         await populateCodeLists();
       } catch (error) {
         console.error(`Top-level error in createSFFModuleSheetsAndTables: ${error}`);
+        throw error;
       }
     });
   } finally {
@@ -308,248 +318,6 @@ export async function createSFFModuleSheetsAndTables() {
         console.error("Failed to re-register event handlers:", error);
       }
     }, HANDLER_REGISTRATION_DELAY); // Add a bit extra time for safety
-  }
-}
-
-async function createTable(context: Excel.RequestContext, sheetName: ModelType | SFFModelType) {
-  try {
-    const sheet = context.workbook.worksheets.getItem(sheetName);
-    const tableName = sheetName.toString();
-    const fields = getTableFieldsNames(sheetName);
-    const headers = fields.map((field) => (field === "@id" ? "'@id" : field)); // eslint-disable-line quotes
-
-    // Check if the table already exists
-    let table: Excel.Table | null = null;
-    let tableExists = true;
-
-    try {
-      table = sheet.tables.getItem(tableName);
-      // Add table to tracked objects to maintain its lifecycle
-      context.trackedObjects.add(table);
-
-      // Get header range and add to tracked objects
-      const tableHeaders = table.getHeaderRowRange();
-      context.trackedObjects.add(tableHeaders);
-      tableHeaders.load("values");
-      await context.sync();
-
-      // Check if headers need to be updated
-      const tableHeadersValues = tableHeaders.values[0];
-      const headersToAdd: string[] = [];
-
-      // Find missing headers efficiently
-      for (const header of headers) {
-        const cleanHeader = header === "'@id" ? "@id" : header;
-        if (!tableHeadersValues.includes(cleanHeader)) {
-          headersToAdd.push(cleanHeader);
-        }
-      }
-
-      // Add missing headers if needed
-      if (headersToAdd.length > 0) {
-        const newHeaders = [...tableHeadersValues, ...headersToAdd];
-        const headersRange = tableHeaders.getResizedRange(0, headersToAdd.length);
-        headersRange.values = [newHeaders];
-      }
-    } catch (error) {
-      tableExists = false;
-      table = null; // Ensure table is null if it wasn't found
-    }
-
-    if (!tableExists) {
-      try {
-        // Create table and apply all formatting in one batch
-        const rangeAddress = `A1:${String.fromCharCode(65 + headers.length - 1)}1`;
-        const tableRange = sheet.getRange(rangeAddress);
-        tableRange.values = [headers];
-
-        // Create the table and track it immediately
-        table = sheet.tables.add(tableRange.getResizedRange(1000, 0), true);
-        context.trackedObjects.add(table);
-        table.name = tableName;
-        table.showTotals = false;
-
-        // Apply immediate formatting then sync
-        sheet.freezePanes.freezeRows(1);
-        await context.sync();
-
-        // Get a fresh reference after table creation
-        table = sheet.tables.getItem(tableName);
-        context.trackedObjects.add(table);
-
-        // Apply remaining formatting
-        const tableRangeFormatting = table.getRange();
-        context.trackedObjects.add(tableRangeFormatting);
-        tableRangeFormatting.format.wrapText = true;
-        tableRangeFormatting.format.verticalAlignment = "Center";
-
-        const headerRangeForWidth = table.getHeaderRowRange();
-        context.trackedObjects.add(headerRangeForWidth);
-        headerRangeForWidth.format.columnWidth = 220;
-
-        tableRangeFormatting.format.autofitColumns();
-        tableRangeFormatting.format.autofitRows();
-
-        // Sync after basic table creation and format
-        await context.sync();
-      } catch (createError) {
-        console.error(`Error creating table ${tableName}: ${createError}`);
-        return; // Exit if table creation failed
-      }
-    }
-
-    // Get a fresh reference to the table before styling to ensure it's valid
-    try {
-      if (table) context.trackedObjects.remove(table);
-      table = sheet.tables.getItem(tableName);
-      context.trackedObjects.add(table);
-      await context.sync();
-    } catch (error) {
-      console.error(`Failed to get fresh table reference for ${tableName}: ${error}`);
-      return;
-    }
-
-    // Apply styling to table with extra precautions
-    try {
-      // Set table style first
-      table.style = "TableStyleLight1";
-      await context.sync();
-
-      // Get fresh header range with tracking for styling
-      const headerRange = table.getHeaderRowRange();
-      context.trackedObjects.add(headerRange);
-      headerRange.format.fill.color = "#3CAEA3";
-      headerRange.format.font.color = "#000000";
-      headerRange.format.font.bold = true;
-      await context.sync();
-
-      // Only now load header values for linked field identification
-      const headerRangeForValues = table.getHeaderRowRange();
-      context.trackedObjects.add(headerRangeForValues);
-      headerRangeForValues.load("values");
-      await context.sync();
-
-      // Style linked fields
-      const model = createInstance(sheetName);
-      const linkedFields = model.getAllFields().filter((field) => field.link);
-
-      if (linkedFields.length > 0) {
-        // Get data range for styling (if any data exists)
-        try {
-          const dataBodyRange = table.getDataBodyRange();
-          context.trackedObjects.add(dataBodyRange);
-          dataBodyRange.load("rowCount");
-          await context.sync();
-
-          if (dataBodyRange.rowCount > 0) {
-            const allHeaders = headerRangeForValues.values[0];
-            for (const field of linkedFields) {
-              const fieldName = field.displayName || field.name;
-              const columnIndex = allHeaders.indexOf(fieldName);
-
-              if (columnIndex !== -1) {
-                try {
-                  const columnRange = dataBodyRange.getColumn(columnIndex);
-                  context.trackedObjects.add(columnRange);
-                  columnRange.format.font.color = "#666666";
-                  await context.sync();
-                } catch (columnError) {
-                  console.error(`Error styling column for ${fieldName}: ${columnError}`);
-                }
-              }
-            }
-          }
-        } catch (dataBodyError) {
-          // This is ok - table might be empty
-          console.warn(`Cannot style data rows in ${tableName}: Empty table or ${dataBodyError}`);
-        }
-      }
-    } catch (error) {
-      console.error(`Error applying styles to table ${tableName}: ${error}`);
-    } finally {
-      // Clean up tracked objects
-      if (table) {
-        try {
-          context.trackedObjects.remove(table);
-        } catch (removeError) {
-          console.error(`Error removing table from tracked objects: ${removeError}`);
-        }
-      }
-    }
-  } catch (outerError) {
-    console.error(`Fatal error processing table ${sheetName}: ${outerError}`);
-  }
-}
-
-const getTableFieldsNames = (sheetName: ModelType | SFFModelType) => {
-  const newClass = createInstance(sheetName);
-  const fieldNames = [];
-  const allFields = newClass.getAllFields();
-
-  for (const field of allFields) {
-    if (field.type === "object") {
-      continue;
-    }
-
-    fieldNames.push(field.displayName || field.name);
-  }
-
-  return fieldNames;
-};
-
-// Modify createHiddenTables to be even more robust against table overlap errors
-async function createHiddenTables(context: Excel.RequestContext, tableName: string) {
-  try {
-    const sheet = context.workbook.worksheets.getItem(tableName);
-    const headers = ["id", "name"];
-
-    // Clear the entire sheet first to ensure no tables exist
-    const usedRange = sheet.getUsedRange();
-    usedRange.clear();
-    await context.sync();
-
-    // Delete all existing tables on the sheet
-    sheet.load("tables/items/length");
-    sheet.load("tables/items");
-    await context.sync();
-
-    if (sheet.tables.items.length > 0) {
-      // Load table names for better logging
-      for (const tbl of sheet.tables.items) {
-        tbl.load("name");
-      }
-      await context.sync();
-
-      // Log and delete each table
-      for (const tbl of sheet.tables.items) {
-        tbl.delete();
-      }
-      await context.sync();
-    }
-
-    // Now the sheet should be clear, create the table
-    const range = sheet.getRange("A1:B1");
-    range.values = [headers];
-    await context.sync();
-
-    // Create table now that we've ensured no conflicts
-    const table = sheet.tables.add(range.getResizedRange(1000, 0), true);
-    table.name = tableName;
-    table.showTotals = false;
-
-    // Format the table
-    const tableRange = table.getRange();
-    tableRange.format.wrapText = true;
-    tableRange.format.verticalAlignment = "Center";
-    table.getHeaderRowRange().format.columnWidth = 220;
-    tableRange.format.autofitColumns();
-    tableRange.format.autofitRows();
-
-    await context.sync();
-    return table;
-  } catch (error) {
-    console.error(`Error in createHiddenTables for ${tableName}: ${error}`);
-    throw error;
   }
 }
 
@@ -1042,58 +810,80 @@ async function handleLinkedFieldChange(
   const newValue: string = details.valueAfter.toString();
   const oldValue: string = details.valueBefore.toString();
 
-  // If ID is empty, prevent changes
+  // Quick validation - If ID is empty, prevent changes immediately
   if (!idCell.values || !idCell.values[0][0]) {
     // eslint-disable-next-line no-param-reassign
     targetCell.values = [[oldValue]];
     return;
   }
 
-  // Get field definition
-  const model = createInstance(activeSheet.name as ModelType | SFFModelType);
-  const field = model.getFieldByName(fieldName);
-
-  if (!field || !field.link) {
-    // eslint-disable-next-line no-param-reassign
-    targetCell.values = [[oldValue]];
-    showErrorDialog("fieldNotFound", "Field not found.");
-    return;
-  }
-
-  // Validate the new value exists in the related sheet
-  if (!(await checkIfAllValuesExistInRelatedSheet(context, field.link.table.className, newValue))) {
-    // eslint-disable-next-line no-param-reassign
-    targetCell.values = [[oldValue]];
-    showErrorDialog("invalidValue", "Invalid value. Please select a value from the list.");
-    return;
-  }
-
-  // Process the multi-select style update (adding/removing values)
+  // Process the multi-select style update early
   const processedValue = processMultiSelectValue(newValue, oldValue);
   if (processedValue === null) {
     // No change needed
     return;
   }
 
-  // Apply the new value
+  // Apply the new value IMMEDIATELY for fast feedback
   // eslint-disable-next-line no-param-reassign
   targetCell.values = [[processedValue]];
 
-  // Update bi-directional links in related tables if needed
-  if (
-    field.link.table.className !== activeSheet.name &&
-    (!(ignoredFields as Record<string, any>)[field.link.table.className] ||
-      !(ignoredFields as Record<string, any>)[field.link.table.className].includes(
-        field.link.field
-      ))
-  ) {
-    await handleLinkedFieldsInRelatedSheet(
-      context,
-      field.link.table.className,
-      field.link.field,
-      idCell.values[0][0].toString(),
-      processedValue
-    );
+  // Sync immediately to show the user their change
+  await context.sync();
+
+  // Now perform validation and related operations in the background
+  try {
+    // Get field definition
+    const model = createInstance(activeSheet.name as ModelType | SFFModelType);
+    const field = model.getFieldByName(fieldName);
+
+    if (!field || !field.link) {
+      throw new Error("Field not found");
+    }
+
+    // Validate the new value exists in the related sheet
+    if (
+      !(await checkIfAllValuesExistInRelatedSheet(context, field.link.table.className, newValue))
+    ) {
+      throw new Error("Invalid value");
+    }
+
+    // Update bi-directional links in related tables if needed
+    if (
+      field.link.table.className !== activeSheet.name &&
+      (!(ignoredFields as Record<string, any>)[field.link.table.className] ||
+        !(ignoredFields as Record<string, any>)[field.link.table.className].includes(
+          field.link.field
+        ))
+    ) {
+      // Use a small timeout to ensure UI updates have been processed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Update related fields in background
+      await handleLinkedFieldsInRelatedSheet(
+        context,
+        field.link.table.className,
+        field.link.field,
+        idCell.values[0][0].toString(),
+        processedValue
+      );
+    }
+  } catch (error: any) {
+    // If validation fails, revert the cell value
+    if (error.message === "Field not found") {
+      // eslint-disable-next-line no-param-reassign
+      targetCell.values = [[oldValue]];
+      showErrorDialog("fieldNotFound", "Field not found.");
+    } else if (error.message === "Invalid value") {
+      // eslint-disable-next-line no-param-reassign
+      targetCell.values = [[oldValue]];
+      showErrorDialog("invalidValue", "Invalid value. Please select a value from the list.");
+    } else {
+      console.error("Error in handleLinkedFieldChange:", error);
+      // eslint-disable-next-line no-param-reassign
+      targetCell.values = [[oldValue]];
+    }
+    await context.sync(); // Make sure the reversion is visible
   }
 }
 
@@ -1424,9 +1214,29 @@ async function multiSelectEventHandler(
     return;
   }
 
+  // Get the values immediately for local processing
+  const newValue = event.details.valueAfter.toString();
+  const oldValue = event.details.valueBefore.toString();
+
+  // Handle common case - empty to empty
+  if ((!newValue || newValue === "") && (!oldValue || oldValue === "")) {
+    return; // No change needed
+  }
+
+  // Process the change locally first to minimize Excel API calls
+  const processedValue = processMultiSelectValue(newValue, oldValue);
+  if (processedValue === null) {
+    return; // No change needed
+  }
+
+  // Create a unique key for this cell to handle debouncing
+  const cellKey = `${event.worksheetId}_${event.address}`;
+
+  // Apply changes with two-phase approach:
+  // 1. First immediate feedback
+  // 2. Then proper formatting with debounce
   await Excel.run(async (context) => {
     try {
-      // Simplified and more efficient processing
       const targetCell = event.getRange(context);
       targetCell.load("address");
       await context.sync();
@@ -1436,21 +1246,39 @@ async function multiSelectEventHandler(
         return;
       }
 
-      const newValue = event.details.valueAfter.toString();
-      const oldValue = event.details.valueBefore.toString();
+      console.log("Processing multi-select change:", newValue, oldValue, processedValue);
 
-      // Handle common case - empty to empty
-      if ((!newValue || newValue === "") && (!oldValue || oldValue === "")) {
-        return; // No change needed
-      }
+      // IMMEDIATE FEEDBACK: Show the new value right away with formatting
+      // to indicate processing is happening
+      targetCell.values = [[processedValue]];
+      targetCell.format.font.italic = true;
+      targetCell.format.fill.color = "#F5F5F5"; // Light gray background
+      await context.sync();
 
-      // Process the change
-      const processedValue = processMultiSelectValue(newValue, oldValue);
-      if (processedValue !== null) {
-        targetCell.values = [[processedValue]];
-      }
+      // Debounce the final formatting to avoid rapid successive updates
+      debounce(
+        cellKey,
+        async () => {
+          await Excel.run(async (innerContext) => {
+            try {
+              const finalCell = innerContext.workbook.worksheets
+                .getActiveWorksheet()
+                .getRange(targetCell.address);
+
+              // Apply final value with normal formatting
+              finalCell.values = [[processedValue]];
+              finalCell.format.font.italic = false;
+              finalCell.format.fill.clear();
+              await innerContext.sync();
+            } catch (error) {
+              console.error("Error in multiSelectEventHandler debounced final formatting:", error);
+            }
+          });
+        },
+        300
+      ); // 300ms debounce - adjust as needed for best UX
     } catch (error) {
-      console.error("Error in multiSelectEventHandler:", error);
+      console.error("Error in multiSelectEventHandler immediate feedback:", error);
     }
   });
 }

@@ -91,29 +91,25 @@ export function processMultiSelectValue(newValue: string, oldValue: string): str
   // Handle edge cases
   if (newValue === oldValue) return null;
 
-  // Split values, handling empty strings properly
-  const newValues = newValue ? newValue.split(", ").filter(Boolean) : [];
-  const oldValues = oldValue ? oldValue.split(", ").filter(Boolean) : [];
+  // Use sets for more efficient operations with large lists
+  const oldValuesSet = new Set(oldValue ? oldValue.split(", ").filter(Boolean) : []);
 
-  // No change detection for arrays
-  if (arraysEqual(newValues, oldValues)) {
-    return null;
+  // Handle common single-value case efficiently
+  if (!newValue) {
+    // Clearing the value
+    return "";
+  } else if (!oldValue) {
+    // First value being added
+    return newValue;
+  } else if (!oldValuesSet.has(newValue)) {
+    // Add the new value (not present in old values)
+    oldValuesSet.add(newValue);
+    return Array.from(oldValuesSet).join(", ");
+  } else {
+    // Toggle behavior - remove the value
+    oldValuesSet.delete(newValue);
+    return Array.from(oldValuesSet).join(", ");
   }
-
-  // Adding a value (normal selection)
-  if (!oldValues.includes(newValue) && newValue) {
-    const result = [...oldValues, newValue].filter(Boolean);
-    return result.join(", ");
-  }
-
-  // Removing a value (toggle behavior)
-  if (oldValues.includes(newValue) && newValue) {
-    const result = oldValues.filter((v) => v !== newValue);
-    return result.join(", ");
-  }
-
-  // First value or clearing
-  return newValue;
 }
 
 /**

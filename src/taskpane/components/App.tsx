@@ -1,8 +1,10 @@
+/* global window */
 import { Button, makeStyles, Spinner } from "@fluentui/react-components";
 import {
   Add24Regular,
   ArrowCircleDown24Regular,
   ArrowCircleUp24Regular,
+  Book24Regular,
 } from "@fluentui/react-icons";
 import { ArrowSync24Regular } from "@fluentui/react-icons/fonts";
 import * as React from "react";
@@ -172,7 +174,7 @@ const App: React.FC<AppProps> = () => {
           onClick={async () => {
             setIsLoading(true);
             try {
-              await createSheetsAndTables();
+              await createSheetsAndTables(intl);
               dialog.showDialog(
                 intl.formatMessage({
                   id: "generics.success",
@@ -217,7 +219,7 @@ const App: React.FC<AppProps> = () => {
           onClick={async () => {
             setIsLoading(true);
             try {
-              await createSFFModuleSheetsAndTables();
+              await createSFFModuleSheetsAndTables(intl);
               dialog.showDialog(
                 intl.formatMessage({
                   id: "generics.success",
@@ -307,6 +309,28 @@ const App: React.FC<AppProps> = () => {
           }}
         >
           <FormattedMessage id="app.button.syncCodeLists" />
+        </Button>
+        <Button
+          content={intl.formatMessage({ id: "app.button.userGuide" })}
+          onClick={() => {
+            window.open(
+              "https://www.commonapproach.org/wp-content/uploads/2024/02/Common-Approach_Guide-for-Basic-Tier-Template-for-Airtable-version-2024-01-16.pdf"
+            );
+          }}
+          appearance="outline"
+          icon={<Book24Regular />}
+          iconPosition="before"
+          disabled={isLoading}
+          className={styles.button}
+          style={{
+            borderColor: "#FF8B3C",
+            color: "#FF8B3C",
+          }}
+        >
+          <FormattedMessage
+            id="app.button.userGuide"
+            defaultMessage="User Guide"
+          />
         </Button>
       </div>
     </div>

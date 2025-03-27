@@ -48,15 +48,31 @@ async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
         continue;
       }
 
-      if (!desc["cids:hasIdentifier"] && !desc["cids:hasName"]) {
+      // Skip entries without name - but be more lenient with identifiers which might be missing
+      // or structured differently in some entries
+      if (!desc["cids:hasName"]) {
         continue;
+      }
+
+      // Extract identifier more carefully, checking for various possible formats
+      let identifier = "";
+      if (desc["cids:hasIdentifier"]) {
+        // Handle both string and object formats
+        if (typeof desc["cids:hasIdentifier"] === "string") {
+          identifier = desc["cids:hasIdentifier"];
+        } else if (desc["cids:hasIdentifier"]["#text"]) {
+          identifier = desc["cids:hasIdentifier"]["#text"].toString();
+        } else {
+          // Try to stringify whatever we have
+          identifier = desc["cids:hasIdentifier"].toString();
+        }
       }
 
       const sector: CodeList = {
         "@id": desc["@_rdf:about"].includes(baseIdUrl)
           ? desc["@_rdf:about"]
           : baseIdUrl + desc["@_rdf:about"],
-        hasIdentifier: desc["cids:hasIdentifier"] ? desc["cids:hasIdentifier"].toString() : "",
+        hasIdentifier: identifier,
         hasName: desc["cids:hasName"]["#text"] ? desc["cids:hasName"]["#text"].toString() : "",
       };
 

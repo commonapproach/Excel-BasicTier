@@ -222,7 +222,7 @@ async function importByData(intl: IntlShape, context: Excel.RequestContext, json
   await context.sync();
 
   // Create Tables if they don't exist
-  await createSheetsAndTables();
+  await createSheetsAndTables(intl);
 
   // Check if data has any class from SFF module
   let needsSFFModuleTables = false;
@@ -234,7 +234,7 @@ async function importByData(intl: IntlShape, context: Excel.RequestContext, json
   }
 
   if (needsSFFModuleTables) {
-    await createSFFModuleSheetsAndTables();
+    await createSFFModuleSheetsAndTables(intl);
   }
 
   // Preload worksheets and tables to avoid repeated load operations
@@ -553,7 +553,7 @@ async function processSingleTableBasicFields(
   }
 }
 
-// Process all links with improved reliability
+// Process all links with improved duplicate detection
 async function processAllLinks(
   context: Excel.RequestContext,
   dataByTable: Record<string, TableInterface[]>,
@@ -572,6 +572,13 @@ async function processAllLinks(
   // Process links with smaller batches
   const BATCH_SIZE = 50; // Process 50 cells at a time
   let updateCount = 0;
+  // Store table, row, column instead of cell references
+  let pendingUpdates: Array<{
+    tableRange: Excel.Range;
+    rowIndex: number;
+    columnIndex: number;
+    value: string;
+  }> = [];
 
   // Process links for each table
   for (const [tableName, tableData] of Object.entries(dataByTable)) {
@@ -644,39 +651,70 @@ async function processAllLinks(
 
         if (validatedIds.length === 0) continue;
 
-        // Get current cell value
+        // Get current cell value with improved parsing for existing links
         const currentValue = tableValues[rowIndex][columnIndex]?.toString() || "";
-        const currentIds = currentValue ? currentValue.split(", ").filter(Boolean) : [];
+        // Normalize by splitting on commas and removing whitespace
+        const currentIds = currentValue
+          ? currentValue
+              .split(",")
+              .map((id: string) => id.trim())
+              .filter(Boolean)
+          : [];
 
-        // Determine new value
+        // Determine new value with enhanced duplicate detection
         let newValue;
         if (isMultiLink) {
-          newValue = [...new Set([...currentIds, ...validatedIds])].join(", ");
+          // Use Set operations to ensure all IDs are unique
+          const combinedIds = [...new Set([...currentIds, ...validatedIds])];
+          // Sort for consistent output (helps with future duplicate detection)
+          combinedIds.sort();
+          newValue = combinedIds.join(", ");
         } else {
+          // For single links, use the existing or the first new valid link
           newValue = currentValue || validatedIds[0] || "";
         }
 
-        // Update the cell
-        try {
-          const cell = tableRange.getCell(rowIndex, columnIndex);
-          cell.values = [[newValue]];
+        // Only update if the value actually changed (to prevent unnecessary updates)
+        if (newValue !== currentValue) {
+          // Store reference information instead of the cell itself
+          pendingUpdates.push({
+            tableRange,
+            rowIndex,
+            columnIndex,
+            value: newValue,
+          });
           updateCount++;
 
-          // Sync periodically to avoid overwhelming Excel
+          // Apply updates in batches
           if (updateCount >= BATCH_SIZE) {
+            // Apply updates using stored references
+            for (const update of pendingUpdates) {
+              const cell = update.tableRange.getCell(update.rowIndex, update.columnIndex);
+              context.trackedObjects.add(cell); // Track the cell explicitly
+              cell.values = [[update.value]];
+            }
             await context.sync();
+            pendingUpdates = [];
             updateCount = 0;
           }
-        } catch (error) {
-          console.error(`Failed to update link for ${recordId}.${fieldName}:`, error);
         }
       }
     }
   }
 
-  // Final sync if needed
-  if (updateCount > 0) {
-    await context.sync();
+  // Apply any remaining updates
+  if (pendingUpdates.length > 0) {
+    try {
+      for (const update of pendingUpdates) {
+        const cell = update.tableRange.getCell(update.rowIndex, update.columnIndex);
+        context.trackedObjects.add(cell); // Track the cell explicitly
+        cell.values = [[update.value]];
+      }
+      await context.sync();
+      pendingUpdates = [];
+    } catch (error) {
+      console.error("Failed to apply final batch of updates:", error);
+    }
   }
 
   // Process bidirectional links in a separate pass
@@ -707,7 +745,7 @@ async function extractAllLinks(
   return allLinks;
 }
 
-// Process bidirectional links with improved reliability
+// Process bidirectional links with improved reliability and performance
 async function processBidirectionalLinks(
   context: Excel.RequestContext,
   dataByTable: Record<string, TableInterface[]>,
@@ -784,6 +822,13 @@ async function processBidirectionalLinks(
 
   // Process each target table in batches
   let updateCount = 0;
+  // Store table, row, column instead of cell references
+  let pendingUpdates: Array<{
+    tableRange: Excel.Range;
+    rowIndex: number;
+    columnIndex: number;
+    value: string;
+  }> = [];
   const BATCH_SIZE = 50;
 
   for (const [targetTable, recordUpdates] of bidirectionalLinks.entries()) {
@@ -852,60 +897,70 @@ async function processBidirectionalLinks(
         );
         if (validatedSourceIds.length === 0) continue;
 
-        // Get current value
+        // Get current value with improved parsing
         const currentValue = tableValues[rowIndex][columnIndex]?.toString() || "";
-        const currentIds = currentValue ? currentValue.split(", ").filter(Boolean) : [];
+        // Normalize by splitting on commas and removing whitespace
+        const currentIds = currentValue
+          ? currentValue
+              .split(",")
+              .map((id: string) => id.trim())
+              .filter(Boolean)
+          : [];
 
-        // Determine new value
+        // Determine new value with enhanced duplicate detection
         let newValue;
         if (isMultiLink) {
-          newValue = [...new Set([...currentIds, ...validatedSourceIds])].join(", ");
+          // Use Set operations to ensure all IDs are unique
+          const combinedIds = [...new Set([...currentIds, ...validatedSourceIds])];
+          // Sort for consistent output (helps with future duplicate detection)
+          combinedIds.sort();
+          newValue = combinedIds.join(", ");
         } else {
+          // For single links, use the existing or the first new valid link
           newValue = currentValue || validatedSourceIds[0] || "";
         }
 
-        // Update the cell
-        try {
-          const cell = tableRange.getCell(rowIndex, columnIndex);
-          cell.values = [[newValue]];
+        // Only update if value changed
+        if (newValue !== currentValue) {
+          // Store reference information instead of the cell itself
+          pendingUpdates.push({
+            tableRange,
+            rowIndex,
+            columnIndex,
+            value: newValue,
+          });
           updateCount++;
 
           if (updateCount >= BATCH_SIZE) {
+            // Apply updates using stored references
+            for (const update of pendingUpdates) {
+              const cell = update.tableRange.getCell(update.rowIndex, update.columnIndex);
+              context.trackedObjects.add(cell); // Track the cell explicitly
+              cell.values = [[update.value]];
+            }
             await context.sync();
+            pendingUpdates = [];
             updateCount = 0;
           }
-        } catch (error) {
-          console.error(
-            `Failed to update bidirectional link for ${targetId}.${targetField}:`,
-            error
-          );
         }
       }
     }
   }
 
-  // Final sync if needed
-  if (updateCount > 0) {
-    await context.sync();
-  }
-}
-
-// Helper function to group data by table name for batch processing
-function groupDataByTable(jsonData: TableInterface[]): Record<string, TableInterface[]> {
-  const dataByTable: Record<string, TableInterface[]> = {};
-
-  for (const data of jsonData) {
-    if (!data["@type"]) continue;
-
-    const tableName = data["@type"].split(":")[1];
-    if (!dataByTable[tableName]) {
-      dataByTable[tableName] = [];
+  // Apply any remaining updates
+  if (pendingUpdates.length > 0) {
+    try {
+      for (const update of pendingUpdates) {
+        const cell = update.tableRange.getCell(update.rowIndex, update.columnIndex);
+        context.trackedObjects.add(cell); // Track the cell explicitly
+        cell.values = [[update.value]];
+      }
+      await context.sync();
+      pendingUpdates = [];
+    } catch (error) {
+      console.error("Failed to apply final batch of updates:", error);
     }
-
-    dataByTable[tableName].push(data);
   }
-
-  return dataByTable;
 }
 
 // Extract direct link fields from the record
@@ -954,6 +1009,24 @@ async function extractDirectLinkFields(
   }
 
   return linkedFields;
+}
+
+// Helper function to group data by table name for batch processing
+function groupDataByTable(jsonData: TableInterface[]): Record<string, TableInterface[]> {
+  const dataByTable: Record<string, TableInterface[]> = {};
+
+  for (const data of jsonData) {
+    if (!data["@type"]) continue;
+
+    const tableName = data["@type"].split(":")[1];
+    if (!dataByTable[tableName]) {
+      dataByTable[tableName] = [];
+    }
+
+    dataByTable[tableName].push(data);
+  }
+
+  return dataByTable;
 }
 
 // Extract links from nested objects
@@ -1168,16 +1241,27 @@ function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[], intl
 
     for (const key in data) {
       if (key !== "@type" && key !== "@context" && !checkIfFieldIsRecognized(tableName, key)) {
-        warnings.push(
-          `${intl.formatMessage(
+        let warningMessage;
+        if (Object.keys(map).includes(tableName)) {
+          warningMessage = intl.formatMessage(
             {
               id: "import.messages.warning.unrecognizedField",
               defaultMessage:
                 "Table <b>{tableName}</b> has unrecognized field <b>{fieldName}</b>. This field will be ignored.",
             },
             { tableName, fieldName: key, b: (str) => `<b>${str}</b>` }
-          )}`
-        );
+          );
+        } else {
+          warningMessage = intl.formatMessage(
+            {
+              id: "import.messages.warning.notImport",
+              defaultMessage:
+                "Table <b>{tableName}</b> has unrecognized field <b>{fieldName}</b> and will not be imported.",
+            },
+            { tableName, fieldName: key, b: (str) => `<b>${str}</b>` }
+          );
+        }
+        warnings.push(warningMessage);
         classesSet.add(tableName);
       }
     }
@@ -1371,10 +1455,7 @@ async function processRecordFields(
 
       // Handle boolean fields
       if (field.type === "boolean") {
-        newValue =
-          newValue === true || (typeof newValue === "string" && newValue.toLowerCase() === "true")
-            ? true
-            : false;
+        newValue = newValue === true ? "Yes" : "No";
       }
 
       // Convert non-primitive values to string if needed

@@ -342,7 +342,9 @@ async function loadDataForWarnings(
         notExportedFields.push(
           intl.formatMessage(
             {
-              id: "export.messages.warning.fieldWillNotBeExported",
+              id: Object.keys(map).includes(table.name)
+                ? "export.messages.warning.fieldWillNotBeExported"
+                : "export.messages.warning.notExported",
               defaultMessage:
                 "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be exported",
             },
@@ -519,7 +521,14 @@ async function processRecord(
         row[field.name] = "";
       }
     } else if (field.type === "boolean") {
-      const fieldValue = value ?? false;
+      let fieldValue = value ?? false;
+
+      // Handle string values like "TRUE", "YES", etc.
+      if (typeof fieldValue === "string") {
+        const upperCaseValue = fieldValue.toUpperCase();
+        fieldValue = upperCaseValue === "TRUE" || upperCaseValue === "YES";
+      }
+
       row[field.name] = fieldValue ? true : false;
     } else {
       const fieldValue = value ?? "";
@@ -622,7 +631,15 @@ async function getObjectFieldsRecursively(
         row[field.name] = "";
       }
     } else if (field.type === "boolean") {
-      row[field.name] = fieldValueOnTable ? true : false;
+      let fieldValue = fieldValueOnTable ?? false;
+
+      // Handle string values like "TRUE", "YES", etc.
+      if (typeof fieldValue === "string") {
+        const upperCaseValue = fieldValue.toUpperCase();
+        fieldValue = upperCaseValue === "TRUE" || upperCaseValue === "YES";
+      }
+
+      row[field.name] = fieldValue ? true : false;
     } else {
       const fieldValue = fieldValueOnTable ?? field?.defaultValue;
       if (fieldValue || fieldValue === 0) {
