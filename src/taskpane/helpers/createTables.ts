@@ -627,35 +627,31 @@ async function applyCheckboxesToBooleanFields(
             },
           };
 
-          // Set default value to "No" for empty cells and convert existing values
+          // Load existing values but keep them as-is or empty
           columnRange.load("values");
           await context.sync();
 
-          // Convert existing values to Yes/No format
+          // Convert only non-empty values to Yes/No format, leaving empty cells empty
           const values = columnRange.values;
           for (let i = 0; i < values.length; i++) {
             const currentValue = values[i][0];
 
-            if (currentValue === "") {
-              // Set empty cells to "No"
-              dataBodyRange.getCell(i, columnIndex).values = [["No"]];
-            } else if (typeof currentValue === "boolean") {
-              // Convert boolean to Yes/No
-              dataBodyRange.getCell(i, columnIndex).values = [[currentValue ? "Yes" : "No"]];
-            } else if (typeof currentValue === "string") {
-              // Convert string "true"/"false" (or variations) to Yes/No
-              const lowerValue = currentValue.toLowerCase();
-              if (lowerValue === "true" || lowerValue === "yes") {
-                dataBodyRange.getCell(i, columnIndex).values = [["Yes"]];
-              } else if (lowerValue === "false" || lowerValue === "no") {
-                dataBodyRange.getCell(i, columnIndex).values = [["No"]];
-              } else {
-                // For any other string, default to "No"
-                dataBodyRange.getCell(i, columnIndex).values = [["No"]];
+            // Only convert non-empty values
+            if (currentValue !== "") {
+              if (typeof currentValue === "boolean") {
+                // Convert boolean to Yes/No
+                dataBodyRange.getCell(i, columnIndex).values = [[currentValue ? "Yes" : "No"]];
+              } else if (typeof currentValue === "string") {
+                // Convert string "true"/"false" (or variations) to Yes/No
+                const lowerValue = currentValue.toLowerCase();
+                if (lowerValue === "true" || lowerValue === "yes") {
+                  dataBodyRange.getCell(i, columnIndex).values = [["Yes"]];
+                } else if (lowerValue === "false" || lowerValue === "no") {
+                  dataBodyRange.getCell(i, columnIndex).values = [["No"]];
+                }
+                // For other strings, leave as is
               }
-            } else {
-              // For any non-boolean, non-string value, default to "No"
-              dataBodyRange.getCell(i, columnIndex).values = [["No"]];
+              // For other types of values, leave as is
             }
           }
 

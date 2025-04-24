@@ -208,59 +208,60 @@ async function importByData(intl: IntlShape, context: Excel.RequestContext, json
     waitingSheet.activate();
   }
   await context.sync();
-
-  // Write message to A1 warning users to do not edit the workbook while importing
-  const range = context.workbook.worksheets.getItem(waitingSheetName).getRange("A1");
-  range.values = [
-    [
-      intl.formatMessage({
-        id: "import.messages.workbook.waiting",
-        defaultMessage: "Do not edit this workbook while importing data.",
-      }),
-    ],
-  ];
-  await context.sync();
-
-  // Create Tables if they don't exist
-  await createSheetsAndTables(intl);
-
-  // Check if data has any class from SFF module
-  let needsSFFModuleTables = false;
-  for (const data of jsonData) {
-    if (data["@type"] && Object.keys(mapSFFModel).includes(data["@type"].split(":")[1])) {
-      needsSFFModuleTables = true;
-      break;
-    }
-  }
-
-  if (needsSFFModuleTables) {
-    await createSFFModuleSheetsAndTables(intl);
-  }
-
-  // Preload worksheets and tables to avoid repeated load operations
-  const tableCache = new Map<
-    string,
-    {
-      worksheet: Excel.Worksheet;
-      table: Excel.Table;
-      tableRange: Excel.Range;
-      tableHeaders: string[];
-      idColumnIndex: number;
-    }
-  >();
-
-  // Group data by table for more efficient processing
-  const dataByTable = groupDataByTable(jsonData);
-
   try {
-    // Load all required tables in a single batch operation
-    await loadTablesToCache(context, dataByTable, tableCache);
+    // Write message to A1 warning users to do not edit the workbook while importing
+    const range = context.workbook.worksheets.getItem(waitingSheetName).getRange("A1");
+    range.values = [
+      [
+        intl.formatMessage({
+          id: "import.messages.workbook.waiting",
+          defaultMessage: "Do not edit this workbook while importing data.",
+        }),
+      ],
+    ];
+    await context.sync();
 
-    // Process the data in correct order
-    await processAllData(context, dataByTable, tableCache);
-  } catch (error: any) {
-    console.error("Error during data processing:", error);
-    throw new Error(`Import failed: ${error.message || "Unknown error"}`);
+    // Create Tables if they don't exist
+    await createSheetsAndTables(intl);
+
+    // Check if data has any class from SFF module
+    let needsSFFModuleTables = false;
+    for (const data of jsonData) {
+      if (data["@type"] && Object.keys(mapSFFModel).includes(data["@type"].split(":")[1])) {
+        needsSFFModuleTables = true;
+        break;
+      }
+    }
+
+    if (needsSFFModuleTables) {
+      await createSFFModuleSheetsAndTables(intl);
+    }
+
+    // Preload worksheets and tables to avoid repeated load operations
+    const tableCache = new Map<
+      string,
+      {
+        worksheet: Excel.Worksheet;
+        table: Excel.Table;
+        tableRange: Excel.Range;
+        tableHeaders: string[];
+        idColumnIndex: number;
+      }
+    >();
+
+    // Group data by table for more efficient processing
+    const dataByTable = groupDataByTable(jsonData);
+
+    try {
+      // Load all required tables in a single batch operation
+      await loadTablesToCache(context, dataByTable, tableCache);
+
+      // Process the data in correct order
+      await processAllData(context, dataByTable, tableCache);
+    } catch (error: any) {
+      console.error("Error during data processing:", error);
+      throw new Error(`Import failed: ${error.message || "Unknown error"}`);
+    }
   } finally {
     // Clean up waiting sheet
     try {

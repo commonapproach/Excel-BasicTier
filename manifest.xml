@@ -107,18 +107,18 @@
           <bt:Override Locale="fr-FR" Value="Groupe de commandes" />
           <bt:Override Locale="fr-CA" Value="Groupe de commandes" />
         </bt:String>
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Start Editing">
-          <bt:Override Locale="fr-FR" Value="Commencer l'édition" />
-          <bt:Override Locale="fr-CA" Value="Commencer l'édition" />
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Common Approach">
+          <bt:Override Locale="fr-FR" Value="Common Approach" />
+          <bt:Override Locale="fr-CA" Value="Common Approach" />
         </bt:String>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description"
-          DefaultValue="The Common Approach to Impact Measurement add-in loaded succesfully. Go to the HOME tab and click the 'Start Editing' button to get started.">
+          DefaultValue="The Common Approach to Impact Measurement add-in loaded succesfully. Go to the HOME tab and click the 'Common Approach' button to get started.">
           <bt:Override Locale="fr-FR"
-            Value="L'add-in Common Approach to Impact Measurement a été chargé avec succès. Accédez à l'onglet ACCUEIL et cliquez sur le bouton 'Commencer l'édition' pour commencer." />
+            Value="L'add-in Common Approach to Impact Measurement a été chargé avec succès. Accédez à l'onglet ACCUEIL et cliquez sur le bouton 'Common Approach' pour commencer." />
           <bt:Override Locale="fr-CA"
-            Value="L'add-in Common Approach to Impact Measurement a été chargé avec succès. Accédez à l'onglet ACCUEIL et cliquez sur le bouton 'Commencer l'édition' pour commencer." />
+            Value="L'add-in Common Approach to Impact Measurement a été chargé avec succès. Accédez à l'onglet ACCUEIL et cliquez sur le bouton 'Common Approach' pour commencer." />
         </bt:String>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Click to Open the Taskpane">
           <bt:Override Locale="fr-FR" Value="Cliquez pour ouvrir le volet de tâches" />
