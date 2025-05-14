@@ -33,6 +33,7 @@ const useStyles = makeStyles({
     justifyContent: "center",
     alignItems: "center",
     margin: "1rem",
+    paddingBottom: "2rem",
     gap: "1rem",
   },
   button: {
@@ -314,7 +315,7 @@ const App: React.FC<AppProps> = () => {
           content={intl.formatMessage({ id: "app.button.userGuide" })}
           onClick={() => {
             window.open(
-              "https://www.commonapproach.org/wp-content/uploads/2024/02/Common-Approach_Guide-for-Basic-Tier-Template-for-Airtable-version-2024-01-16.pdf"
+              "https://www.commonapproach.org/wp-content/uploads/2025/05/Guide-for-Excel-Add-In-Basic-Tier-V3.0-and-SFF.pdf"
             );
           }}
           appearance="outline"

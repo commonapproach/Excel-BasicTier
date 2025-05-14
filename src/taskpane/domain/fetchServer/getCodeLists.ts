@@ -7,22 +7,49 @@ export interface CodeList {
   hasDescription?: string;
 }
 
+interface CacheEntry {
+  data: CodeList[];
+  timestamp: number;
+}
+
 /* global Office console */
-const inMemoryCache: { [key: string]: CodeList[] } = {};
+const inMemoryCache: { [key: string]: CacheEntry } = {};
+const CACHE_EXPIRATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
   try {
-    // Check if the data is already in the cache
-    if (inMemoryCache[url] && inMemoryCache[url].length > 0) {
-      return inMemoryCache[url];
+    const currentTime = Date.now();
+
+    // Check if the data is already in the cache and not expired
+    if (inMemoryCache[url] && inMemoryCache[url].data.length > 0) {
+      // Check if cache entry is less than 24 hours old
+      if (currentTime - inMemoryCache[url].timestamp < CACHE_EXPIRATION_MS) {
+        return inMemoryCache[url].data;
+      }
+      // If expired, remove it from memory cache
+      delete inMemoryCache[url];
     }
 
     // Check if the data is in the Office settings
     const cachedData = Office.context.document.settings.get(url);
     if (cachedData) {
-      const parsedData = JSON.parse(cachedData);
-      inMemoryCache[url] = parsedData;
-      return parsedData;
+      try {
+        const parsedEntry = JSON.parse(cachedData);
+        // Check if the stored data has timestamp and is not expired
+        if (
+          parsedEntry.timestamp &&
+          parsedEntry.data &&
+          currentTime - parsedEntry.timestamp < CACHE_EXPIRATION_MS
+        ) {
+          inMemoryCache[url] = parsedEntry;
+          return parsedEntry.data;
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("Error parsing cached data:", e);
+        // Clear invalid cache
+        Office.context.document.settings.remove(url);
+      }
     }
 
     // eslint-disable-next-line no-undef
@@ -89,16 +116,23 @@ async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
       codeList.push(sector);
     }
 
-    inMemoryCache[url] = codeList;
+    // Create cache entry with timestamp
+    const cacheEntry: CacheEntry = {
+      data: codeList,
+      timestamp: currentTime,
+    };
 
-    // Save the data to the Office settings if codeList is not empty and has less then 200kb
-    if (codeList.length > 0 && JSON.stringify(codeList).length < 200000) {
-      Office.context.document.settings.set(url, JSON.stringify(codeList));
+    inMemoryCache[url] = cacheEntry;
+
+    // Save the data to the Office settings if codeList is not empty and has less than 200kb
+    if (codeList.length > 0 && JSON.stringify(cacheEntry).length < 200000) {
+      Office.context.document.settings.set(url, JSON.stringify(cacheEntry));
       Office.context.document.settings.saveAsync();
     }
 
     return codeList;
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error(`Error fetching or parsing ${url}:`, error);
     return [];
   }
@@ -159,6 +193,7 @@ export async function getAllSectors(): Promise<CodeList[]> {
 
     return [...icnpoSectors, ...statsCanSectors];
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error("Error fetching sectors code list:", error);
     return [];
   }
@@ -172,6 +207,7 @@ export async function getAllPopulationServed(): Promise<CodeList[]> {
 
     return populationServed;
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error("Error fetching PopulationServed code list:", error);
     return [];
   }
@@ -185,6 +221,7 @@ export async function getAllProvinceTerritory(): Promise<CodeList[]> {
 
     return provinceTerritory;
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error("Error fetching ProvinceTerritory code list:", error);
     return [];
   }
@@ -198,6 +235,7 @@ export async function getAllOrganizationType(): Promise<CodeList[]> {
 
     return organizationType;
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error("Error fetching OrganizationType code list:", error);
     return [];
   }
@@ -211,6 +249,7 @@ export async function getAllLocalities(): Promise<CodeList[]> {
 
     return localities;
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error("Error fetching Locality code list:", error);
     return [];
   }

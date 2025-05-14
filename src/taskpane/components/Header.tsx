@@ -80,6 +80,30 @@ const Header: React.FC<HeaderProps> = () => {
     }
   };
 
+  const downloadSampleDataSFF = async (event: React.MouseEvent) => {
+    event.preventDefault();
+    try {
+      const url = "https://ontology.commonapproach.org/examples/CIDSBasictestandSFFSampleData.json";
+      const response = await fetch(url);
+      const data = await response.blob();
+
+      // Create a blob URL and trigger download
+      const blobUrl = window.URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = blobUrl;
+      a.download = "CIDSBasictestandSFFSampleData.json";
+      document.body.appendChild(a);
+      a.click();
+
+      // Clean up
+      window.URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Error downloading sample data:", error);
+    }
+  };
+
   return (
     <section className={styles.welcome__header}>
       <Image
@@ -102,7 +126,7 @@ const Header: React.FC<HeaderProps> = () => {
       <p className={styles.note_message}>
         <FormattedMessage
           id="app.getSampleData"
-          defaultMessage="New user? Try importing this"
+          defaultMessage="New user? Try importing a"
         />{" "}
         &nbsp;
         <span
@@ -115,6 +139,24 @@ const Header: React.FC<HeaderProps> = () => {
           <FormattedMessage
             id="app.link.sampleData"
             defaultMessage="sample data file"
+          />
+        </span>
+        &nbsp;
+        <FormattedMessage
+          id="generics.or"
+          defaultMessage="or"
+        />
+        &nbsp;
+        <span
+          aria-label="sample data file + sff module"
+          className={styles.link}
+          onClick={downloadSampleDataSFF}
+          role="button"
+          tabIndex={0}
+        >
+          <FormattedMessage
+            id="app.link.sampleDataSFF"
+            defaultMessage="sample data file + SFF module"
           />
         </span>
       </p>
