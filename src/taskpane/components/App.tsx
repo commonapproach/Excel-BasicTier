@@ -1,5 +1,5 @@
-/* global window */
-import { Button, makeStyles, Spinner } from "@fluentui/react-components";
+/* global window, fetch, document, HTMLInputElement */
+import { Button, makeStyles, Spinner, tokens } from "@fluentui/react-components";
 import {
   Add24Regular,
   ArrowCircleDown24Regular,
@@ -32,9 +32,9 @@ const useStyles = makeStyles({
     flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
-    margin: "1rem",
-    paddingBottom: "2rem",
-    gap: "1rem",
+    margin: "0.7rem", // Reduced margin
+    paddingBottom: "1rem", // Reduced padding
+    gap: "0.7rem", // Reduced gap
   },
   button: {
     width: "160px",
@@ -50,6 +50,27 @@ const useStyles = makeStyles({
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
+  },
+  warning_note: {
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightBold,
+    color: tokens.colorNeutralForeground1,
+    textAlign: "center",
+    marginTop: "5px",
+    marginBottom: "5px",
+  },
+  note_message: {
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightRegular,
+    color: tokens.colorNeutralForeground1,
+    textAlign: "center",
+    marginTop: "5px",
+    marginBottom: "5px",
+  },
+  link: {
+    cursor: "pointer",
+    color: tokens.colorBrandForeground1,
+    textDecoration: "underline",
   },
 });
 
@@ -86,6 +107,67 @@ const App: React.FC<AppProps> = () => {
       reader.readAsText(file);
     } else {
       onError(new Error(intl.formatMessage({ id: "import.messages.error.notJson" })));
+    }
+  };
+
+  const downloadSampleData = async (event: React.MouseEvent) => {
+    event.preventDefault();
+    try {
+      const url =
+        "https://ontology.commonapproach.org/examples/CIDSBasicZerokitsTestData-SHARED.json";
+      const response = await fetch(url);
+      const data = await response.blob();
+
+      // Create a blob URL and trigger download
+      const blobUrl = window.URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = blobUrl;
+      a.download = "CIDSBasicZerokitsTestData-SHARED.json";
+      document.body.appendChild(a);
+      a.click();
+
+      // Clean up
+      window.URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    } catch (error) {
+      dialog.showDialog(
+        intl.formatMessage({ id: "generics.error" }),
+        intl.formatMessage({
+          id: "import.messages.error.downloadingSampleData",
+          defaultMessage: "Error downloading sample data",
+        })
+      );
+    }
+  };
+
+  const downloadSampleDataSFF = async (event: React.MouseEvent) => {
+    event.preventDefault();
+    try {
+      const url = "https://ontology.commonapproach.org/examples/CIDSBasictestandSFFSampleData.json";
+      const response = await fetch(url);
+      const data = await response.blob();
+
+      // Create a blob URL and trigger download
+      const blobUrl = window.URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = blobUrl;
+      a.download = "CIDSBasictestandSFFSampleData.json";
+      document.body.appendChild(a);
+      a.click();
+
+      // Clean up
+      window.URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    } catch (error) {
+      dialog.showDialog(
+        intl.formatMessage({ id: "generics.error" }),
+        intl.formatMessage({
+          id: "import.messages.error.downloadingSampleData",
+          defaultMessage: "Error downloading sample data",
+        })
+      );
     }
   };
 
@@ -334,6 +416,48 @@ const App: React.FC<AppProps> = () => {
           />
         </Button>
       </div>
+
+      <p className={styles.warning_note}>
+        <FormattedMessage
+          id="app.taskpane.warning"
+          defaultMessage="This task pane must be open for the add-in to work!"
+        />
+      </p>
+
+      <p className={styles.note_message}>
+        <FormattedMessage
+          id="app.getSampleData"
+          defaultMessage="New user? Try importing a"
+        />{" "}
+        <span
+          aria-label="sample data file"
+          className={styles.link}
+          onClick={downloadSampleData}
+          role="button"
+          tabIndex={0}
+        >
+          <FormattedMessage
+            id="app.link.sampleData"
+            defaultMessage="Basic Tier sample data file"
+          />
+        </span>{" "}
+        <FormattedMessage
+          id="generics.or"
+          defaultMessage="or"
+        />{" "}
+        <span
+          aria-label="sample data file + sff module"
+          className={styles.link}
+          onClick={downloadSampleDataSFF}
+          role="button"
+          tabIndex={0}
+        >
+          <FormattedMessage
+            id="app.link.sampleDataSFF"
+            defaultMessage="Basic Tier + SFF sample data file"
+          />
+        </span>
+      </p>
     </div>
   );
 };
