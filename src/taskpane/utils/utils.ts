@@ -92,6 +92,8 @@ const customLoader: Options.DocLoader["documentLoader"] = async (url: string) =>
 
 // List of good context URLs.
 const goodContexts = [
+  "https://ontology.commonapproach.org/contexts/cidsContext.jsonld", // Base context
+  "https://ontology.commonapproach.org/contexts/sffContext.jsonld", // Extended context for SFF module
   "https://ontology.commonapproach.org/cids.jsonld",
   "https://ontology.commonapproach.org/sff-1.0.jsonld",
   "http://ontology.eil.utoronto.ca/cids/contexts/cidsContext.json", // try to keep compatibility with old CIDS ontology
