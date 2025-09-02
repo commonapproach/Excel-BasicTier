@@ -69,4 +69,5 @@ export type FieldTypes =
   | "datetime"
   | "select"
   | "multiselect"
-  | "boolean";
+  | "boolean"
+  | "number";

@@ -11,7 +11,15 @@ import {
 import { FieldType } from "../domain/models/Base";
 import { validate } from "../domain/validation/validator";
 import { createSFFModuleSheetsAndTables, createSheetsAndTables } from "../taskpane";
-import { parseJsonLd } from "../utils/utils";
+import { getCidsTableSuffix } from "../utils/typeHelpers";
+import {
+  convertIcAddressToPostalAddress,
+  convertIcHasAddressToHasAddress,
+  convertNumericalValueToHasNumericalValue,
+  convertUnknownUnitToDescription,
+  harmonizeCardinalityProperty,
+  parseJsonLd,
+} from "../utils/utils";
 
 /* global Excel console */
 export async function importData(
@@ -49,8 +57,56 @@ export async function importData(
       return;
     }
 
+    // json-ld expansion/compaction
     // eslint-disable-next-line no-param-reassign
     jsonData = await parseJsonLd(jsonData);
+
+    // Backward compatibility transformations (order matters)
+    // 1. numerical_value -> hasNumericalValue
+    // eslint-disable-next-line no-param-reassign
+    jsonData = convertNumericalValueToHasNumericalValue(jsonData);
+
+    // 2. unknown unit_of_measure -> unitDescription (async)
+    const unitConversion = await convertUnknownUnitToDescription(jsonData);
+    // eslint-disable-next-line no-param-reassign
+    jsonData = unitConversion.data;
+    const convertedUnknownUnits = unitConversion.converted;
+
+    // 3. ic:hasAddress -> hasAddress
+    const beforeAddressProp = JSON.stringify(jsonData);
+    // eslint-disable-next-line no-param-reassign
+    jsonData = convertIcHasAddressToHasAddress(jsonData);
+    const propertyNamesConverted = JSON.stringify(jsonData) !== beforeAddressProp;
+
+    // 4. harmonize describesPopulation / i72:cardinality_of
+    // eslint-disable-next-line no-param-reassign
+    jsonData = harmonizeCardinalityProperty(jsonData);
+
+    // 5. Convert legacy Address objects to PostalAddress/Address shape
+    let convertedAddress = false;
+    function convertAndTrack(obj: any): any {
+      if (
+        obj &&
+        typeof obj === "object" &&
+        obj["@type"] &&
+        ((typeof obj["@type"] === "string" && obj["@type"].toLowerCase().includes("address")) ||
+          (Array.isArray(obj["@type"]) &&
+            obj["@type"].some((t: string) => t.toLowerCase().includes("address"))))
+      ) {
+        const original = JSON.stringify(obj);
+        const converted = convertIcAddressToPostalAddress(obj);
+        if (JSON.stringify(converted) !== original) convertedAddress = true;
+        return converted;
+      }
+      return obj;
+    }
+    if (Array.isArray(jsonData)) {
+      // eslint-disable-next-line no-param-reassign
+      jsonData = jsonData.map(convertAndTrack);
+    } else if (jsonData && typeof jsonData === "object") {
+      // eslint-disable-next-line no-param-reassign
+      jsonData = convertAndTrack(jsonData);
+    }
 
     // Remove duplicated links
     // eslint-disable-next-line no-param-reassign
@@ -79,12 +135,40 @@ export async function importData(
     jsonData = transformObjectFieldIfWrongFormat(jsonData);
 
     // Validate JSON
-    let { errors, warnings } = await validate(jsonData, "import", intl);
+    const { errors, warnings } = await validate(jsonData, "import", intl);
 
-    warnings = [...warnings, ...warnIfUnrecognizedFieldsWillBeIgnored(jsonData, intl)];
+    // Add conversion warnings
+    if (convertedAddress) {
+      warnings.push(
+        intl.formatMessage({
+          id: "import.messages.warning.addressConverted",
+          defaultMessage: "Some addresses were converted from the old format to the new format.",
+        })
+      );
+    }
+    if (propertyNamesConverted) {
+      warnings.push(
+        intl.formatMessage({
+          id: "import.messages.warning.propertyNamesConverted",
+          defaultMessage:
+            "Some property names were converted from old format (ic:hasAddress to hasAddress).",
+        })
+      );
+    }
+    if (convertedUnknownUnits) {
+      warnings.push(
+        intl.formatMessage({
+          id: "import.messages.warning.unknownUnitsConverted",
+          defaultMessage:
+            "Some unknown unit_of_measure values were copied to unitDescription field. Please review and select the correct unit from the dropdown.",
+        })
+      );
+    }
+
+    const allWarns = [...warnings, ...warnIfUnrecognizedFieldsWillBeIgnored(jsonData, intl)];
 
     allErrors = errors.join("<hr/>");
-    allWarnings = warnings.join("<hr/>");
+    allWarnings = allWarns.join("<hr/>");
 
     if (allErrors.length > 0) {
       setDialogContent(
@@ -151,7 +235,10 @@ async function importFileData(
     // Ignore types/classes that are not recognized
     const fullMap = { ...map, ...mapSFFModel };
     const filteredItems = Array.isArray(jsonData)
-      ? jsonData.filter((data: any) => Object.keys(fullMap).includes(data["@type"].split(":")[1]))
+      ? jsonData.filter((data: any) => {
+          const suffix = getCidsTableSuffix(data["@type"]);
+          return suffix ? Object.keys(fullMap).includes(suffix) : false;
+        })
       : jsonData;
 
     // Make sure we have data to import
@@ -227,7 +314,8 @@ async function importByData(intl: IntlShape, context: Excel.RequestContext, json
     // Check if data has any class from SFF module
     let needsSFFModuleTables = false;
     for (const data of jsonData) {
-      if (data["@type"] && Object.keys(mapSFFModel).includes(data["@type"].split(":")[1])) {
+      const suffix = getCidsTableSuffix(data["@type"]);
+      if (suffix && Object.keys(mapSFFModel).includes(suffix)) {
         needsSFFModuleTables = true;
         break;
       }
@@ -753,143 +841,115 @@ async function processBidirectionalLinks(
   tableCache: Map<string, any>,
   importedRecordsMap: Map<string, TableInterface>
 ): Promise<void> {
-  // Collect all bidirectional links
-  const bidirectionalLinks: Map<
-    string, // Target table
-    Map<
-      string, // Target record ID
-      Map<
-        string, // Target field
-        { sourceIds: string[]; sourceTable: string } // Source record IDs and table
-      >
-    >
+  // Map<targetTable, Map<targetRecordId, Map<targetField, { sourceIds, sourceTable }>>>
+  const recordUpdates: Map<
+    string,
+    Map<string, Map<string, { sourceIds: string[]; sourceTable: string }>>
   > = new Map();
 
-  // Collect all bidirectional links first
+  // Gather reverse link updates
   for (const [tableName, tableData] of Object.entries(dataByTable)) {
+    const cid = createInstance(tableName as ModelType | SFFModelType);
     for (const data of tableData) {
       const recordId = data["@id"];
+      if (!recordId) continue;
+
+      // Use existing comprehensive link extraction
       const links = await extractAllLinks(tableName, data);
 
-      // Get model info
-      const cid = createInstance(tableName as ModelType | SFFModelType);
-
-      // Process each link field to find bidirectional links
       for (const [fieldName, linkedIds] of Object.entries(links)) {
         if (!linkedIds || linkedIds.length === 0) continue;
 
-        // Find field definition
-        let field;
+        let fieldDef: any;
         try {
-          field = cid.getFieldByName(fieldName);
+          fieldDef = cid.getFieldByName(fieldName);
         } catch (e) {
-          continue; // Skip if field not found
+          continue;
         }
+        if (!fieldDef || fieldDef.type !== "link" || !fieldDef.link?.table || !fieldDef.link.field)
+          continue;
 
-        if (!field || field.type !== "link" || !field.link?.table || !field.link.field) continue;
+        const targetTable = fieldDef.link.table.className;
+        const targetField = fieldDef.link.field;
+        if (!targetTable || !targetField) continue;
 
-        const targetTable = field.link.table.className;
-        const targetField = field.link.field;
-
-        // Skip self-references
+        // Skip self references (Excel already handled forward link)
         if (targetTable === tableName) continue;
 
-        // Add to bidirectional links map
         for (const targetId of linkedIds) {
-          if (!bidirectionalLinks.has(targetTable)) {
-            bidirectionalLinks.set(targetTable, new Map());
-          }
-
-          if (!bidirectionalLinks.get(targetTable)!.has(targetId)) {
-            bidirectionalLinks.get(targetTable)!.set(targetId, new Map());
-          }
-
-          if (!bidirectionalLinks.get(targetTable)!.get(targetId)!.has(targetField)) {
-            bidirectionalLinks.get(targetTable)!.get(targetId)!.set(targetField, {
-              sourceIds: [],
-              sourceTable: tableName,
-            });
-          }
-
-          bidirectionalLinks
-            .get(targetTable)!
-            .get(targetId)!
-            .get(targetField)!
-            .sourceIds.push(recordId);
+          if (!recordUpdates.has(targetTable)) recordUpdates.set(targetTable, new Map());
+          const targetMap = recordUpdates.get(targetTable)!;
+          if (!targetMap.has(targetId)) targetMap.set(targetId, new Map());
+          const fieldMap = targetMap.get(targetId)!;
+          if (!fieldMap.has(targetField))
+            fieldMap.set(targetField, { sourceIds: [], sourceTable: tableName });
+          const entry = fieldMap.get(targetField)!;
+          if (!entry.sourceIds.includes(recordId)) entry.sourceIds.push(recordId);
         }
       }
     }
   }
 
-  // Process each target table in batches
+  // Nothing to do
+  if (recordUpdates.size === 0) return;
+
+  // Batch update constants
+  const BATCH_SIZE = 50;
   let updateCount = 0;
-  // Store table, row, column instead of cell references
   let pendingUpdates: Array<{
     tableRange: Excel.Range;
     rowIndex: number;
     columnIndex: number;
     value: string;
   }> = [];
-  const BATCH_SIZE = 50;
 
-  for (const [targetTable, recordUpdates] of bidirectionalLinks.entries()) {
+  // Apply reverse updates
+  for (const [targetTable, targetRecords] of recordUpdates.entries()) {
     const tableInfo = tableCache.get(targetTable);
-    if (!tableInfo) continue;
+    if (!tableInfo) continue; // Target table not created/imported
 
-    // Refresh the table range
+    // Refresh table range
     try {
       const freshTable = tableInfo.worksheet.tables.getItem(targetTable);
       context.trackedObjects.add(freshTable);
-
       const freshRange = freshTable.getRange();
       context.trackedObjects.add(freshRange);
       freshRange.load("values");
-
       await context.sync();
-
       tableInfo.table = freshTable;
       tableInfo.tableRange = freshRange;
-    } catch (error) {
-      console.error(`Could not refresh target table ${targetTable}:`, error);
+    } catch (e) {
+      console.error(`Could not refresh target table ${targetTable}:`, e);
       continue;
     }
 
     const { tableRange, tableHeaders, idColumnIndex } = tableInfo;
     const tableValues = tableRange.values;
-
-    // Map IDs to rows
     const idToRowIndex = new Map<string, number>();
     for (let i = 1; i < tableValues.length; i++) {
       const rowId = tableValues[i][idColumnIndex]?.toString();
-      if (rowId) {
-        idToRowIndex.set(rowId, i);
-      }
+      if (rowId) idToRowIndex.set(rowId, i);
     }
 
-    // Process each target record
-    for (const [targetId, fieldUpdates] of recordUpdates.entries()) {
+    for (const [targetId, fieldsMap] of targetRecords.entries()) {
       const rowIndex = idToRowIndex.get(targetId);
       if (rowIndex === undefined) continue;
 
-      // Process each field update
-      for (const [targetField, { sourceIds, sourceTable }] of fieldUpdates.entries()) {
+      for (const [targetField, { sourceIds, sourceTable }] of fieldsMap.entries()) {
         const columnIndex = tableHeaders.indexOf(targetField);
         if (columnIndex === -1) continue;
 
-        // Get target model info
-        const targetCid = createInstance(targetTable as ModelType | SFFModelType);
-        let field;
+        // Confirm target field is link type
+        let targetCidField;
         try {
-          field = targetCid.getFieldByName(targetField);
+          const targetCid = createInstance(targetTable as ModelType | SFFModelType);
+          targetCidField = targetCid.getFieldByName(targetField);
         } catch (e) {
-          continue; // Skip if field not found
+          continue;
         }
+        if (!targetCidField || targetCidField.type !== "link") continue;
+        const isMultiLink = targetCidField.representedType === "array";
 
-        if (!field || field.type !== "link") continue;
-
-        const isMultiLink = field.representedType === "array";
-
-        // Validate source IDs
         const validatedSourceIds = validateLinks(
           sourceIds,
           sourceTable,
@@ -898,9 +958,7 @@ async function processBidirectionalLinks(
         );
         if (validatedSourceIds.length === 0) continue;
 
-        // Get current value with improved parsing
         const currentValue = tableValues[rowIndex][columnIndex]?.toString() || "";
-        // Normalize by splitting on commas and removing whitespace
         const currentIds = currentValue
           ? currentValue
               .split(",")
@@ -908,35 +966,21 @@ async function processBidirectionalLinks(
               .filter(Boolean)
           : [];
 
-        // Determine new value with enhanced duplicate detection
-        let newValue;
+        let newValue: string;
         if (isMultiLink) {
-          // Use Set operations to ensure all IDs are unique
-          const combinedIds = [...new Set([...currentIds, ...validatedSourceIds])];
-          // Sort for consistent output (helps with future duplicate detection)
-          combinedIds.sort();
-          newValue = combinedIds.join(", ");
+          const combined = [...new Set([...currentIds, ...validatedSourceIds])].sort();
+          newValue = combined.join(", ");
         } else {
-          // For single links, use the existing or the first new valid link
           newValue = currentValue || validatedSourceIds[0] || "";
         }
 
-        // Only update if value changed
         if (newValue !== currentValue) {
-          // Store reference information instead of the cell itself
-          pendingUpdates.push({
-            tableRange,
-            rowIndex,
-            columnIndex,
-            value: newValue,
-          });
+          pendingUpdates.push({ tableRange, rowIndex, columnIndex, value: newValue });
           updateCount++;
-
           if (updateCount >= BATCH_SIZE) {
-            // Apply updates using stored references
             for (const update of pendingUpdates) {
               const cell = update.tableRange.getCell(update.rowIndex, update.columnIndex);
-              context.trackedObjects.add(cell); // Track the cell explicitly
+              context.trackedObjects.add(cell);
               cell.values = [[update.value]];
             }
             await context.sync();
@@ -948,18 +992,16 @@ async function processBidirectionalLinks(
     }
   }
 
-  // Apply any remaining updates
   if (pendingUpdates.length > 0) {
     try {
       for (const update of pendingUpdates) {
         const cell = update.tableRange.getCell(update.rowIndex, update.columnIndex);
-        context.trackedObjects.add(cell); // Track the cell explicitly
+        context.trackedObjects.add(cell);
         cell.values = [[update.value]];
       }
       await context.sync();
-      pendingUpdates = [];
-    } catch (error) {
-      console.error("Failed to apply final batch of updates:", error);
+    } catch (e) {
+      console.error("Failed to apply final batch of reverse link updates:", e);
     }
   }
 }
@@ -1019,7 +1061,8 @@ function groupDataByTable(jsonData: TableInterface[]): Record<string, TableInter
   for (const data of jsonData) {
     if (!data["@type"]) continue;
 
-    const tableName = data["@type"].split(":")[1];
+    const tableName = getCidsTableSuffix(data["@type"]);
+    if (!tableName) continue;
     if (!dataByTable[tableName]) {
       dataByTable[tableName] = [];
     }
@@ -1227,15 +1270,15 @@ function warnIfUnrecognizedFieldsWillBeIgnored(tableData: TableInterface[], intl
   const warnings = [];
   const classesSet = new Set();
   for (const data of tableData) {
+    const suffixCheck = getCidsTableSuffix(data["@type"]);
     if (
       !data["@type"] ||
-      (!Object.keys(map).includes(data["@type"].split(":")[1]) &&
-        !Object.keys(mapSFFModel).includes(data["@type"].split(":")[1]))
+      !suffixCheck ||
+      (!Object.keys(map).includes(suffixCheck) && !Object.keys(mapSFFModel).includes(suffixCheck))
     ) {
       continue;
     }
-
-    const tableName = data["@type"].split(":")[1];
+    const tableName = suffixCheck;
     if (classesSet.has(tableName)) {
       continue;
     }
@@ -1320,10 +1363,11 @@ function findLastFieldValueForNestedFields(data: any, field: FieldType, record: 
 function transformObjectFieldIfWrongFormat(jsonData: TableInterface[]) {
   for (const data of jsonData) {
     for (const [key, value] of Object.entries(data)) {
+      const suffixCheck = getCidsTableSuffix(data["@type"]);
       if (
         !data["@type"] ||
-        (!Object.keys(map).includes(data["@type"].split(":")[1]) &&
-          !Object.keys(mapSFFModel).includes(data["@type"].split(":")[1]))
+        !suffixCheck ||
+        (!Object.keys(map).includes(suffixCheck) && !Object.keys(mapSFFModel).includes(suffixCheck))
       ) {
         continue;
       }
@@ -1332,35 +1376,105 @@ function transformObjectFieldIfWrongFormat(jsonData: TableInterface[]) {
         key === "@type" ||
         key === "@context" ||
         key === "@id" ||
-        !checkIfFieldIsRecognized(data["@type"].split(":")[1], key)
+        !checkIfFieldIsRecognized(getCidsTableSuffix(data["@type"])!, key)
       ) {
         continue;
       }
 
-      let cid;
-      if (Object.keys(map).includes(data["@type"].split(":")[1])) {
-        cid = new map[data["@type"].split(":")[1] as ModelType]();
-      } else {
-        cid = new mapSFFModel[data["@type"].split(":")[1] as SFFModelType]();
-      }
+      const suffix = getCidsTableSuffix(data["@type"])!;
+      const cid = Object.keys(map).includes(suffix)
+        ? new map[suffix as ModelType]()
+        : new mapSFFModel[suffix as SFFModelType]();
 
       const field = cid.getFieldByName(key);
-      if (field?.type === "object") {
+      if (!field) continue;
+
+      // OBJECT field normalization
+      if (field.type === "object") {
         const fieldValue = handleNestedObjectFieldType(jsonData, field, value);
-        if (fieldValue) {
-          data[key] = fieldValue;
+        if (fieldValue) data[key] = fieldValue;
+        continue;
+      }
+
+      // LINK field normalization (object or array of objects/ids)
+      if (field.type === "link") {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          let id = (value as any)["@id"] as string | undefined;
+          if (!id) {
+            const nestedType = (value as any)["@type"];
+            const nestedSuffix = nestedType
+              ? getCidsTableSuffix(nestedType) || (typeof nestedType === "string" ? nestedType : "")
+              : "";
+            if (nestedSuffix) {
+              id = (data["@id"] as string).replace(/\/$/, "") + "/" + nestedSuffix;
+              (value as any)["@id"] = id;
+            }
+          }
+          if (id) {
+            data[key] = id;
+            if ((value as any)["@type"]) {
+              const alreadyExists = jsonData.some((d) => d && d["@id"] === id);
+              if (!alreadyExists) jsonData.push(value as any);
+            }
+          } else {
+            (data as any)[key] = undefined;
+          }
+          continue;
         }
-      } else if (field?.type === "link" && typeof value === "object" && !Array.isArray(value)) {
-        let id = value["@id"];
-        if (!id) {
-          id =
-            data["@id"] +
-            "/" +
-            (value["@type"].includes(":") ? value["@type"].split(":")[1] : value["@type"]);
+        if (Array.isArray(value)) {
+          const processedIds: string[] = [];
+          for (const item of value) {
+            if (typeof item === "object" && item !== null) {
+              let id = (item as any)["@id"] as string | undefined;
+              if (!id) {
+                const nestedType = (item as any)["@type"];
+                const nestedSuffix = nestedType
+                  ? getCidsTableSuffix(nestedType) ||
+                    (typeof nestedType === "string" ? nestedType : "")
+                  : "";
+                if (nestedSuffix) {
+                  id = (data["@id"] as string).replace(/\/$/, "") + "/" + nestedSuffix;
+                  (item as any)["@id"] = id;
+                }
+              }
+              if (id) {
+                processedIds.push(id);
+                if ((item as any)["@type"]) {
+                  const alreadyExists = jsonData.some((d) => d && d["@id"] === id);
+                  if (!alreadyExists) jsonData.push(item as any);
+                }
+              }
+            } else if (typeof item === "string") {
+              processedIds.push(item);
+            }
+          }
+          (data as any)[key] = [...new Set(processedIds)];
+          continue;
         }
-        value["@id"] = id;
-        jsonData.push(value);
-        data[key] = id;
+        continue; // primitive id string
+      }
+
+      // SELECT / MULTISELECT normalization when value supplied as object(s) {"@id": "..."}
+      if (field.type === "select" || field.type === "multiselect") {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          const id = (value as any)["@id"] as string | undefined;
+          (data as any)[key] = id || undefined;
+          continue;
+        }
+        if (Array.isArray(value)) {
+          const ids: string[] = [];
+          for (const item of value) {
+            if (typeof item === "object" && item !== null) {
+              const id = (item as any)["@id"] as string | undefined;
+              if (id) ids.push(id);
+            } else if (typeof item === "string") {
+              ids.push(item);
+            }
+          }
+          (data as any)[key] =
+            field.type === "multiselect" ? [...new Set(ids)] : ids[0] || undefined;
+          continue;
+        }
       }
     }
   }
@@ -1454,20 +1568,36 @@ async function processRecordFields(
         }
       }
 
-      // Handle boolean fields
+      // Handle boolean fields (store localized Yes/No display)
       if (field.type === "boolean") {
         newValue = newValue === true ? "Yes" : "No";
       }
 
-      // Convert non-primitive values to string if needed
+      // Handle number fields: coerce to numeric like Airtable (invalid => null)
+      if (field.type === "number") {
+        if (newValue !== null && newValue !== undefined && newValue !== "") {
+          const parsed = Number(Array.isArray(newValue) ? newValue[0] : newValue);
+          newValue = Number.isNaN(parsed) ? null : parsed;
+        } else {
+          newValue = null;
+        }
+      }
+
+      // Convert remaining non-primitive values (excluding number/select/multiselect/boolean) to string
       if (
         field.type !== "boolean" &&
         field.type !== "select" &&
         field.type !== "multiselect" &&
+        field.type !== "number" &&
         newValue !== null &&
-        newValue !== undefined
+        newValue !== undefined &&
+        typeof newValue !== "string"
       ) {
-        newValue = newValue.toString();
+        try {
+          newValue = newValue.toString();
+        } catch (_) {
+          newValue = null;
+        }
       }
 
       // Add field to record
@@ -1497,7 +1627,7 @@ function validateLinks(
     if (importedRecordsMap && importedRecordsMap.has(id)) {
       const record = importedRecordsMap.get(id);
       // Verify the record is of the correct type
-      if (record && record["@type"] && record["@type"].split(":")[1] === targetTable) {
+      if (record && record["@type"] && getCidsTableSuffix(record["@type"]) === targetTable) {
         isValid = true;
       }
     }

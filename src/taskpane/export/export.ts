@@ -1,6 +1,7 @@
 import moment from "moment-timezone";
 import { IntlShape } from "react-intl";
 import { CodeList, getCodeListByTableName } from "../domain/fetchServer/getCodeLists";
+import { UNIT_DEFINITIONS, UNIT_IRI, getUnitDefinition } from "../domain/fetchServer/getUnitsOfMeasure";
 import { TableInterface } from "../domain/interfaces/table.interface";
 import {
   contextUrl,
@@ -197,13 +198,22 @@ export async function exportData(
           }
         }
 
-        let row: TableInterface = {
+        // Row initialization advanced logic to mirror latest Airtable extension:
+        // Population uses i72:Population; SFF module tables use sff: prefix; Address uses ic:; others cids:
+        const isSFFTable = Object.prototype.hasOwnProperty.call(mapSFFModel, table.name);
+        const computedType =
+          table.name === "Population"
+            ? "i72:Population"
+            : isSFFTable
+            ? `sff:${table.name}`
+            : `cids:${table.name}`;
+        const row: TableInterface = {
           "@context": contextUrl,
-          "@type": `cids:${table.name}`,
+          "@type": computedType,
           "@id": "",
         };
 
-        let isEmpty = true; // Flag to check if the row is empty
+        const isEmpty = true; // Flag to check if the row is empty
 
         // Process all fields in one pass using the cached headers
         await processRecord(tableFields, headers, recordValues, row, isEmpty).then((result) => {
@@ -213,6 +223,72 @@ export async function exportData(
           }
         });
       }
+    }
+
+    // Post-processing enhancements (multi-typing, units, cleaning) before validation & warnings
+
+    // Add multi-typing for Indicators that have i72:cardinality_of link (become i72:Cardinality as additional @type)
+    for (const item of data) {
+      const typeVal = item["@type"];
+      if (!typeVal) continue;
+      const types = Array.isArray(typeVal) ? [...typeVal] : [typeVal];
+      const isIndicator = types.includes("cids:Indicator");
+      if (isIndicator && item["i72:cardinality_of"]) {
+        if (!types.includes("i72:Cardinality")) {
+          item["@type"] = [...types, "i72:Cardinality"]; // mutate
+        }
+      }
+    }
+
+    // Ensure each Indicator has a unit_of_measure (default unspecified) & propagate to IndicatorReport value objects
+    const indicatorUnitById: Record<string, string> = {};
+    const usedUnitIris: Set<string> = new Set();
+    for (const item of data) {
+      const typeVal = item["@type"]; const types = Array.isArray(typeVal) ? typeVal : [typeVal];
+      if (types.includes("cids:Indicator")) {
+        if (item["@id"]) {
+          const existing = item["i72:unit_of_measure"] as string | undefined;
+          const resolved = existing && existing.trim() !== "" ? existing : UNIT_IRI.UNSPECIFIED;
+            if (!existing) item["i72:unit_of_measure"] = resolved;
+          indicatorUnitById[item["@id"] as string] = resolved;
+          usedUnitIris.add(resolved);
+        }
+      }
+    }
+    for (const item of data) {
+      const typeVal = item["@type"]; const types = Array.isArray(typeVal) ? typeVal : [typeVal];
+      if (types.includes("cids:IndicatorReport")) {
+        const indicatorId = item["forIndicator"]; // link field name assumption
+        const valueObj = item["i72:value"] as Record<string, any> | undefined;
+        if (valueObj && !valueObj["i72:unit_of_measure"]) {
+          const fallback = (typeof indicatorId === "string" && indicatorUnitById[indicatorId]) || UNIT_IRI.UNSPECIFIED;
+          valueObj["i72:unit_of_measure"] = fallback;
+          usedUnitIris.add(fallback);
+        }
+      }
+    }
+
+    // Inject unit definition objects for any used unit IRIs (avoid duplicates) including related cids unit IRIs referenced
+    const queue: string[] = Array.from(usedUnitIris);
+    const seen: Set<string> = new Set();
+    while (queue.length > 0) {
+      const iri = queue.shift() as string;
+      if (seen.has(iri)) continue;
+      seen.add(iri);
+      // Attempt fetch definition (may fall back to static)
+      try {
+        const def = (await getUnitDefinition(iri)) || UNIT_DEFINITIONS[iri];
+        if (def) {
+          const already = data.some((d) => d && d["@id"] === iri);
+            if (!already) data.push({ "@context": contextUrl, ...def });
+          // enqueue nested cids IRIs
+          for (const val of Object.values(def)) {
+            if (typeof val === "string" && val.startsWith("https://ontology.commonapproach.org/cids#")) {
+              queue.push(val);
+            }
+          }
+        }
+      } catch { /* ignore */ }
     }
 
     const { errors, warnings } = await validate(data, "export", intl);
@@ -241,7 +317,10 @@ export async function exportData(
       return;
     }
 
-    if (allWarnings.length > 0) {
+  // Always deep-clean just before potentially showing warnings (but keep original for reference)
+  const cleanedData = deepCleanExportObjects(data);
+
+  if (allWarnings.length > 0) {
       setDialogContent(
         intl.formatMessage({
           id: "generics.warning",
@@ -259,7 +338,7 @@ export async function exportData(
               defaultMessage: "<p>Do you want to export anyway?</p>",
             }),
             () => {
-              downloadJSONLD(data, `${getFileName(orgName)}.json`);
+        downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
               setDialogContent(
                 intl.formatMessage({
                   id: "generics.success",
@@ -276,7 +355,7 @@ export async function exportData(
       );
       return;
     }
-    downloadJSONLD(data, `${getFileName(orgName)}.json`);
+  downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
     setDialogContent(
       intl.formatMessage({
         id: "generics.success",
@@ -530,6 +609,17 @@ async function processRecord(
       }
 
       row[field.name] = fieldValue ? true : false;
+    } else if (field.type === "number") {
+      const fieldValue = value;
+      let exportValue: number | null = null;
+      if (fieldValue !== null && fieldValue !== undefined && fieldValue !== "") {
+        const parsed = Number(fieldValue);
+        if (!isNaN(parsed)) {
+          exportValue = parsed;
+          isEmpty = false;
+        }
+      }
+      row[field.name] = exportValue as any; // number or null handled
     } else {
       const fieldValue = value ?? "";
       if (fieldValue || fieldValue === 0) {
@@ -543,7 +633,7 @@ async function processRecord(
       } else {
         exportValue = fieldValue.toString() || field.defaultValue;
       }
-      row[field.name] = exportValue;
+      row[field.name] = exportValue as any; // number or null handled
     }
   }
 
@@ -567,6 +657,42 @@ function getFileName(orgName: string): string {
   const timestamp = `${year}${monthFormatted}${dayFormatted}`;
 
   return `CIDSBasic${orgName}${timestamp}`;
+}
+
+// Deep clean export objects removing null/undefined/empty strings/empty arrays or objects.
+// Preserve empty string for i72:hasNumericalValue.
+function deepCleanExportObjects(items: TableInterface[]): TableInterface[] {
+  const keepEmptyKey = (key: string) => key === "i72:hasNumericalValue";
+  const clean = (value: any, parentKey?: string): any => {
+    if (Array.isArray(value)) {
+      const arr = value.map((v) => clean(v)).filter((v) => {
+        if (v === null || v === undefined) return false;
+        if (Array.isArray(v) && v.length === 0) return false;
+        if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
+        return true;
+      });
+      return arr;
+    }
+    if (value && typeof value === "object") {
+      const objEntries = Object.entries(value)
+        .map(([k, v]) => [k, clean(v, k)] as [string, any])
+        .filter(([k, v]) => {
+          if (v === null || v === undefined) return false;
+          if (typeof v === "string" && v.trim() === "" && !keepEmptyKey(k)) return false;
+          if (Array.isArray(v) && v.length === 0) return false;
+          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
+          return true;
+        });
+      return Object.fromEntries(objEntries);
+    }
+    if (typeof value === "string" && value.trim() === "" && !keepEmptyKey(parentKey || "")) {
+      return undefined;
+    }
+    return value;
+  };
+  return items
+    .map((item) => clean(item))
+    .filter((i) => i && typeof i === "object" && Object.keys(i).length > 0) as TableInterface[];
 }
 
 /* eslint-disable no-param-reassign */
@@ -640,6 +766,17 @@ async function getObjectFieldsRecursively(
       }
 
       row[field.name] = fieldValue ? true : false;
+    } else if (field.type === "number") {
+      const fieldValue = fieldValueOnTable;
+      let exportValue: number | null = null;
+      if (fieldValue !== null && fieldValue !== undefined && fieldValue !== "") {
+        const parsed = Number(fieldValue);
+        if (!isNaN(parsed)) {
+          exportValue = parsed;
+          isEmpty = false;
+        }
+      }
+      row[field.name] = exportValue;
     } else {
       const fieldValue = fieldValueOnTable ?? field?.defaultValue;
       if (fieldValue || fieldValue === 0) {

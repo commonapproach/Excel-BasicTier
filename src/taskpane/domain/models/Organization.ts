@@ -30,8 +30,7 @@ export class Organization extends Base {
         semiRequired: false,
       },
       {
-        name: "ic:hasAddress",
-        displayName: "hasAddress",
+        name: "hasAddress",
         type: "link",
         representedType: "array",
         defaultValue: [],

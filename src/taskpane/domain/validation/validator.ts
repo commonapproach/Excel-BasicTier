@@ -1,3 +1,4 @@
+/* global URL */
 import moment from "moment";
 import { IntlShape } from "react-intl";
 import { getCodeListByTableName } from "../fetchServer/getCodeLists";
@@ -12,11 +13,30 @@ import {
   SFFModelType,
 } from "../models";
 import { FieldType } from "../models/Base";
+import { getPrimaryStandardType } from "../../utils/typeHelpers";
 
 type Operation = "import" | "export";
 
 const validatorErrors = new Set<string>();
 const validatorWarnings = new Set<string>();
+
+// External JSON-LD object types we knowingly include in the export (do not warn for these)
+const KNOWN_EXTERNAL_TYPES = new Set<string>([
+  // ISO 21972 unit model common classes (examples observed in TTL sources)
+  "i72:Cardinality_unit",
+  "i72:Compound_unit",
+  "i72:Singular_unit",
+  "i72:Monetary_unit",
+  "i72:Unit_multiple_or_submultiple",
+  "i72:Unit_multiplication",
+  "i72:Unit_exponentiation",
+  "i72:Derived_unit",
+  "i72:Base_unit",
+  "i72:Unit",
+  // ISO i72 Population object is external to CIDS tables
+  "i72:Population",
+]);
+
 
 export async function validate(
   tableData: TableInterface[],
@@ -55,8 +75,15 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
   await validateLinkedFields(tableData, operation, intl);
 
   for (const data of tableData) {
-    if (validateTypeProp(data, intl)) return;
-    const tableName = data["@type"].split(":")[1];
+    if (validateTypeProp(data, intl)) continue;
+    const mainType = getPrimaryStandardType(data["@type"]);
+    const tableName = mainType ? mainType.split(":")[1] : "";
+    if (
+      !tableName ||
+      (!Object.keys(map).includes(tableName) && !Object.keys(mapSFFModel).includes(tableName))
+    ) {
+      return;
+    }
     const id = data["@id"];
 
     // Initialize the schema for the table
@@ -75,6 +102,8 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
 
     //check if required fields are present
     for (const field of cid.getAllFields()) {
+      // For link fields, we defer presence/emptiness reporting to validateLinkedFields to avoid duplicate messages
+      if (field.type === "link") continue;
       if (
         field.required &&
         !Object.keys(data)
@@ -117,6 +146,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
 
     for (const field of cid.getAllFields()) {
       if (field.semiRequired) {
+        if (field.type === "link") continue; // Avoid duplicate link warnings; handled in validateLinkedFields
         if (
           !Object.keys(data)
             .map((d) => (d.indexOf(":") !== -1 ? d.split(":")[1] : d))
@@ -230,6 +260,31 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
       }
 
       if (fieldProps.type !== "object") {
+        // Warn if a field with type 'number' is not a valid number
+        if (
+          fieldProps.type === "number" &&
+          fieldValue !== null &&
+          fieldValue !== undefined &&
+          fieldValue !== ""
+        ) {
+          const parsed = Number(fieldValue);
+          if (isNaN(parsed)) {
+            validatorWarnings.add(
+              intl.formatMessage(
+                {
+                  id: "validation.messages.warning.invalidNumberTypeModel",
+                  defaultMessage:
+                    "Field <b>{fieldName}</b> in <b>{tableName}</b> must be a number.",
+                },
+                {
+                  fieldName: fieldDisplayName,
+                  tableName,
+                  b: (str) => `<b>${str}</b>`,
+                }
+              )
+            );
+          }
+        }
         // Validate unique fields
         if (fieldProps?.unique) {
           const uniqueResult = validateUnique(
@@ -557,7 +612,56 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
     );
     return true;
   }
-  if (data["@type"].length === 0) {
+
+  const typeVal = data["@type"];
+  let mainType: string | null = null;
+
+  // Recognize both cids: and sff: namespaces
+  const isStandard = (t: string) => t.startsWith("cids:") || t.startsWith("sff:");
+  if (typeof typeVal === "string") {
+    mainType = isStandard(typeVal) ? typeVal : null;
+  } else if (Array.isArray(typeVal) && typeVal.length > 0) {
+    mainType = typeVal.find((t: any) => typeof t === "string" && isStandard(t)) || null;
+  }
+
+  // If no standard type is present, this is an external object (e.g., i72 unit)
+  // Keep a warning about unrecognized table/type unless in KNOWN_EXTERNAL_TYPES.
+  if (!mainType) {
+    // Try to present a meaningful type/table name from the first non-cids type if available
+    let externalType: string | null = null;
+    if (typeof typeVal === "string") {
+      externalType = typeVal;
+    } else if (Array.isArray(typeVal)) {
+      const nonCids = typeVal.find((t: any) => typeof t === "string" && !isStandard(t));
+      externalType =
+        (nonCids as string) || (typeVal.find((t: any) => typeof t === "string") as string) || null;
+    }
+
+    const tableName = externalType
+      ? externalType.includes(":")
+        ? externalType.split(":")[1]
+        : externalType
+      : "unknown";
+    // Suppress the warning for known external types we intentionally include (e.g., i72 units)
+    if (!externalType || !KNOWN_EXTERNAL_TYPES.has(externalType)) {
+      validatorWarnings.add(
+        intl.formatMessage(
+          {
+            id: "validation.messages.unrecognizedTypeProperty",
+            defaultMessage:
+              "Table <b>{tableName}</b> is not recognized in the basic tier and will be ignored.",
+          },
+          {
+            tableName,
+            b: (str) => `<b>${str}</b>`,
+          }
+        )
+      );
+    }
+    return true;
+  }
+
+  if (mainType.length === 0) {
     validatorErrors.add(
       intl.formatMessage({
         id: "validation.messages.emptyTypeProperty",
@@ -566,12 +670,13 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
     );
     return true;
   }
+
   try {
-    if (data["@type"]?.split(":")[1].length === 0) {
+    if (mainType.split(":")[1].length === 0) {
       validatorErrors.add(
         intl.formatMessage({
           id: "validation.messages.invalidTypeProperty",
-          defaultMessage: "<b>@type</b> must follow the format <b>cids:tableName</b>",
+          defaultMessage: "<b>@type</b> must follow the format <b>prefix:tableName</b>",
         })
       );
       return true;
@@ -580,12 +685,12 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
     validatorErrors.add(
       intl.formatMessage({
         id: "validation.messages.invalidTypeProperty",
-        defaultMessage: "<b>@type</b> must follow the format <b>cids:tableName</b>",
+        defaultMessage: "<b>@type</b> must follow the format <b>prefix:tableName</b>",
       })
     );
     return true;
   }
-  const tableName = (data["@type"] as string)?.split(":")[1];
+  const tableName = mainType.split(":")[1];
   if (!map[tableName as ModelType] && !mapSFFModel[tableName as SFFModelType]) {
     validatorWarnings.add(
       intl.formatMessage(
@@ -611,8 +716,15 @@ async function validateLinkedFields(
   intl: IntlShape
 ) {
   for (const data of tableData) {
-    if (validateTypeProp(data, intl)) return;
-    const tableName = data["@type"].split(":")[1];
+    if (validateTypeProp(data, intl)) continue;
+    const mainType = getPrimaryStandardType(data["@type"]);
+    const tableName = mainType ? mainType.split(":")[1] : "";
+    if (
+      !tableName ||
+      (!Object.keys(map).includes(tableName) && !Object.keys(mapSFFModel).includes(tableName))
+    ) {
+      return;
+    }
 
     // Initialize the schema for the table
     let cid;
@@ -716,9 +828,16 @@ async function validateLinkedFields(
       }
 
       for (const linkedData of tableData) {
-        if (validateTypeProp(linkedData, intl)) return;
-        const linkedTableName = linkedData["@type"].split(":")[1];
-        if (linkedTableName === linkedTable) {
+        const typeVal = linkedData["@type"];
+        const linkedMainType = getPrimaryStandardType(typeVal);
+        const linkedTableName = linkedMainType ? linkedMainType.split(":")[1] : "";
+        // Special-case: Population is modeled as i72:Population (external to CIDS)
+        const isI72Population =
+          linkedTable === "Population" &&
+          ((typeof typeVal === "string" && typeVal === "i72:Population") ||
+            (Array.isArray(typeVal) && typeVal.includes("i72:Population")));
+
+        if (linkedTableName === linkedTable || isI72Population) {
           linkedIds.push(linkedData["@id"]);
         }
       }
@@ -764,7 +883,7 @@ function validateIfIdIsValidUrl(
   tableData.map((item) => {
     let tableName;
     try {
-      tableName = item["@type"].split(":")[1];
+      tableName = (getPrimaryStandardType(item["@type"]) || "").split(":")[1];
     } catch (error) {
       validatorErrors.add(
         intl.formatMessage({

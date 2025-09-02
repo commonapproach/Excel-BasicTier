@@ -2,6 +2,7 @@
 import { IntlShape } from "react-intl";
 import { dialogHandler } from "./context/DialogContext";
 import { getCodeListByTableName } from "./domain/fetchServer/getCodeLists";
+import { getUnitOptions } from "./domain/fetchServer/getUnitsOfMeasure";
 import {
   createInstance,
   ignoredFields,
@@ -24,13 +25,8 @@ import {
   updateRelatedFieldsValues,
 } from "./helpers/handleLinkedFieldsOnOtherSheet";
 
-const hiddenSheets = [
-  "ProvinceTerritory",
-  "OrganizationType",
-  "Locality",
-  "StreetType",
-  "StreetDirection",
-];
+// Hidden sheets hold code lists used for data validation. StreetType & StreetDirection removed; UnitsOfMeasure added.
+const hiddenSheets = ["ProvinceTerritory", "OrganizationType", "Locality", "UnitsOfMeasure"];
 
 // Replace existing silent mode implementation with this more comprehensive solution
 let inSilentMode = false;
@@ -127,10 +123,8 @@ export async function createSheetsAndTables(intl: IntlShape) {
         // Create all needed sheets in batch
         const sheetsToAdd = Object.keys(map).filter((name) => !existingSheetNames.has(name));
 
-        // REVERT: Only create StreetType and StreetDirection (as in original)
-        const hiddenSheetsToAdd = ["StreetType", "StreetDirection"].filter(
-          (name) => !existingSheetNames.has(name)
-        );
+        // Create any missing hidden sheets (now includes UnitsOfMeasure)
+        const hiddenSheetsToAdd = hiddenSheets.filter((name) => !existingSheetNames.has(name));
 
         // Add all sheets in one batch
         for (const sheetName of sheetsToAdd) {
@@ -157,23 +151,16 @@ export async function createSheetsAndTables(intl: IntlShape) {
           await createTable(context, sheetName as ModelType, intl);
         }
 
-        // KEY FIX: Create tables only for StreetType and StreetDirection
-        // Add additional safety by ensuring we complete one table at a time with proper syncing
-        for (const hidden of ["StreetType", "StreetDirection"]) {
+        // Create tables for all hidden sheets (recreate structure before population)
+        for (const hidden of hiddenSheets) {
           try {
             await createHiddenTables(context, hidden);
-
-            // Explicitly sync after each table to ensure it's fully created
-            await context.sync();
-
-            // Verify the table is properly accessible before moving on
-            const verifyTable = context.workbook.worksheets.getItem(hidden).tables.getItem(hidden);
-            verifyTable.load("name");
-            await context.sync();
           } catch (error) {
+            // eslint-disable-next-line no-console
             console.error(`Error creating hidden table ${hidden}: ${error}`);
           }
         }
+        await context.sync();
 
         // Add an explicit additional sync point to ensure all operations are complete
         await context.sync();
@@ -181,8 +168,8 @@ export async function createSheetsAndTables(intl: IntlShape) {
         // Add a longer delay here to ensure Excel has fully processed the table creation
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        // REORDERED - First populate hidden sheets with code lists BEFORE setting up validations
-        await populateSpecificHiddenSheets(context, ["StreetType", "StreetDirection"]);
+        // Populate dynamic hidden sheet (UnitsOfMeasure) before validations
+        await populateUnitsOfMeasureHiddenSheet(context);
 
         // Add an explicit sync point here to ensure tables are fully populated
         await context.sync();
@@ -294,8 +281,9 @@ export async function createSFFModuleSheetsAndTables(intl: IntlShape) {
           }
         }
 
-        // First populate hidden sheets with code lists - they're depended on by other sheets
+        // First populate hidden sheets with code lists (excluding UnitsOfMeasure which is handled separately)
         await populateHiddenSheets(context);
+        await populateUnitsOfMeasureHiddenSheet(context);
 
         // Now populate standard code lists
         await populateCodeLists();
@@ -473,10 +461,18 @@ async function setupSelectFieldValidation(
     await context.sync(); // Sync to make sure data is available
 
     // Find the appropriate source table for the dropdown
-    const sourceName =
+    let sourceName =
       [...predefinedCodeLists, ...hiddenSheets].find((listName) =>
         field.name.toLowerCase().includes(listName.toLowerCase())
       ) || field.name;
+
+    // Special mapping for units of measure (field name/displayName does not match sheet name)
+    if (
+      field.name.toLowerCase().includes("unit_of_measure") ||
+      (field.displayName && field.displayName.toLowerCase() === "unit_of_measure")
+    ) {
+      sourceName = "UnitsOfMeasure";
+    }
 
     // Set validation rule
     // eslint-disable-next-line no-param-reassign
@@ -1292,7 +1288,10 @@ async function populateHiddenSheets(context: Excel.RequestContext) {
     await context.sync();
 
     const existingSheetNames = new Set(sheets.items.map((sheet) => sheet.name));
-    const availableSheets = hiddenSheets.filter((name) => existingSheetNames.has(name));
+    // Exclude UnitsOfMeasure here; it has a dedicated population function
+    const availableSheets = hiddenSheets
+      .filter((name) => name !== "UnitsOfMeasure")
+      .filter((name) => existingSheetNames.has(name));
 
     // Process each sheet's code list one by one
     for (const codeList of availableSheets) {
@@ -1753,76 +1752,51 @@ async function registerLinkAndMultiselectHandlers(context: Excel.RequestContext)
   }
 }
 
-// New helper function to populate only specific hidden sheets
-async function populateSpecificHiddenSheets(context: Excel.RequestContext, sheetNames: string[]) {
+// Dedicated population for UnitsOfMeasure since it comes from a different source and already filtered
+async function populateUnitsOfMeasureHiddenSheet(context: Excel.RequestContext) {
+  const sheetName = "UnitsOfMeasure";
   try {
-    // Check which sheets actually exist
+    // Ensure sheet exists
     const sheets = context.workbook.worksheets;
     sheets.load("items/name");
     await context.sync();
+    if (!sheets.items.some((s) => s.name === sheetName)) return;
 
-    // Process each sheet's code list one by one with careful error handling
-    for (const codeList of sheetNames) {
-      try {
-        // First verify the sheet exists
-        if (!sheets.items.some((sheet) => sheet.name === codeList)) {
-          continue;
-        }
-
-        // Get data from API
-        const data = await getCodeListByTableName(codeList);
-
-        if (!data || data.length === 0) {
-          continue;
-        }
-
-        const sheet = sheets.getItem(codeList);
-
-        // Force recreate table to avoid conflicts - with explicit error handling
+    // Recreate the table to ensure clean state
+    try {
+      const sheet = sheets.getItem(sheetName);
+      sheet.load("tables/items/length");
+      await context.sync();
+      if (sheet.tables.items.length > 0) {
         try {
-          sheet.load("tables/items/length");
+          sheet.tables.getItem(sheetName).delete();
           await context.sync();
-
-          if (sheet.tables.items.length > 0) {
-            const existingTable = sheet.tables.getItem(codeList);
-            existingTable.delete();
-            await context.sync();
-          }
-        } catch (e) {
-          console.warn(`No existing table to delete for ${codeList} or error occurred: ${e}`);
+        } catch (_) {
+          /* ignore */
         }
-
-        // Add extra sync point
-        await context.sync();
-
-        // Create fresh table with careful error handling
-        let table;
-        try {
-          table = await createHiddenTables(context, codeList);
-          await context.sync(); // Make sure table creation is complete
-        } catch (tableError) {
-          console.error(`Failed to create table for ${codeList}: ${tableError}`);
-          continue; // Skip this table if creation failed
-        }
-
-        // Populate data with explicit error handling
-        try {
-          const tableRange = table.getRange();
-          tableRange.load("address"); // Load before use
-          await context.sync();
-
-          await populateCodeListBatchedSimple(context, tableRange, data);
-        } catch (populateError) {
-          console.error(`Error populating data for ${codeList}: ${populateError}`);
-        }
-      } catch (error) {
-        console.error(`Error processing ${codeList}: ${error}`);
       }
+    } catch (_) {
+      /* ignore */
     }
 
-    // Final sync to ensure everything is done
+    // Create empty table structure (id, name)
+    await createHiddenTables(context, sheetName);
+    await context.sync();
+
+    // Fetch units
+    const units = await getUnitOptions();
+    if (!units || units.length === 0) return;
+
+    // Populate
+    const sheet = context.workbook.worksheets.getItem(sheetName);
+    const table = sheet.tables.getItem(sheetName);
+    const tableRange = table.getRange();
+    const values = [["id", "name"], ...units.map((u) => [u.id, u.name])];
+    const targetRange = sheet.getRangeByIndexes(0, 0, values.length, 2);
+    targetRange.values = values;
     await context.sync();
   } catch (error) {
-    console.error(`Error in populateSpecificHiddenSheets: ${error}`);
+    // eslint-disable-next-line no-console
+    console.error(`Error populating ${sheetName}: ${error}`);
   }
 }

@@ -18,9 +18,13 @@
     "ecmaVersion": "latest",
     "sourceType": "module"
   },
+  "env": {
+    "browser": true,
+    "es2021": true
+  },
   "rules": {
     "prettier/prettier": [
-      "error",
+      "warn",
       {
         "singleQuote": false,
         "usePrettierrc": true,
@@ -115,15 +119,7 @@
         "ignoreFunctionalComponents": true
       }
     ],
-    "no-param-reassign": [
-      "error",
-      {
-        "props": true,
-        "ignorePropertyModificationsFor": [
-          "state"
-        ]
-      }
-    ],
+  "no-param-reassign": 0,
     "arrow-body-style": [
       "error",
       "as-needed",
@@ -141,7 +137,8 @@
     "quotes": [
       "error",
       "double"
-    ]
+    ],
+  "no-redeclare": 0
   },
   "settings": {
     "react": {

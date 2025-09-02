@@ -20,7 +20,8 @@ export class Outcome extends Base {
         semiRequired: false,
       },
       {
-        name: "hasName",
+        name: "org:hasName",
+        displayName: "hasName",
         type: "string",
         representedType: "string",
         unique: true,

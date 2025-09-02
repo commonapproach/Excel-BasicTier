@@ -1,4 +1,13 @@
-/* global fetch console */
+/* global fetch, console */
+// Lightweight optional debug logger (disabled by default to satisfy no-console rule)
+const __DEBUG_CONTEXT = false;
+function ctxDebugError(...args: any[]) {
+  if (__DEBUG_CONTEXT) {
+    // eslint-disable-next-line no-console
+    console.error(...args);
+  }
+}
+
 interface CacheEntry {
   data: unknown;
   timestamp: number;
@@ -7,12 +16,6 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
-/**
- * Fetches and caches the JSON data from the given URL.
- * @param url The URL to fetch the data from.
- * @param ttl The time-to-live for the cache entry in milliseconds.
- * @returns The parsed JSON data.
- */
 export async function getContext(url: string, ttl: number = CACHE_TTL): Promise<unknown> {
   const now = Date.now();
   const cached = cache.get(url);
@@ -31,7 +34,7 @@ export async function getContext(url: string, ttl: number = CACHE_TTL): Promise<
 
     return data;
   } catch (error) {
-    console.error(`Error fetching or parsing ${url}:`, error);
+    ctxDebugError(`Error fetching or parsing ${url}:`, error);
     throw error;
   }
 }

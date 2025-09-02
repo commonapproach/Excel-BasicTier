@@ -27,7 +27,8 @@ export class Sector extends Base {
         semiRequired: true,
       },
       {
-        name: "hasName",
+        name: "org:hasName",
+        displayName: "hasName",
         type: "string",
         representedType: "string",
         defaultValue: "",

@@ -1,3 +1,4 @@
+/* global fetch, console, localStorage */
 import { XMLParser } from "fast-xml-parser";
 
 export interface CodeList {
@@ -7,133 +8,215 @@ export interface CodeList {
   hasDescription?: string;
 }
 
-interface CacheEntry {
+interface CacheItem {
   data: CodeList[];
   timestamp: number;
+  expiresIn: number; // 24 hours in milliseconds
 }
 
-/* global Office console */
-const inMemoryCache: { [key: string]: CacheEntry } = {};
-const CACHE_EXPIRATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+const inMemoryCache: { [key: string]: CodeList[] } = {};
+const CACHE_EXPIRATION_TIME = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+// GitHub fallback URLs mapping
+const GITHUB_FALLBACK_URLS: { [key: string]: string } = {
+  "https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl":
+    "https://raw.githubusercontent.com/commonapproach/CodeLists/main/ICNPOsector/ICNPOsector.owl",
+  "https://codelist.commonapproach.org/StatsCanSector/StatsCanSector.owl":
+    "https://raw.githubusercontent.com/commonapproach/CodeLists/main/StatsCanSector/StatsCanSector.owl",
+  "https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl":
+    "https://raw.githubusercontent.com/commonapproach/CodeLists/main/PopulationServed/PopulationServed.owl",
+  "https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl":
+    "https://raw.githubusercontent.com/commonapproach/CodeLists/main/ProvinceTerritory/ProvinceTerritory.owl",
+  "https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl":
+    "https://raw.githubusercontent.com/commonapproach/CodeLists/main/OrgTypeGOC/OrgTypeGOC.owl",
+  "https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl":
+    "https://raw.githubusercontent.com/commonapproach/CodeLists/main/Locality/LocalityStatsCan.owl",
+};
+
+// Internal lightweight debug helper so we can keep diagnostic output without triggering no-console
+const __DEBUG_FETCH = false; // toggle to true locally for verbose logs
+function debugLog(...args: any[]) {
+  if (__DEBUG_FETCH) {
+    // eslint-disable-next-line no-console
+    console.log(...args);
+  }
+}
+function debugWarn(...args: any[]) {
+  if (__DEBUG_FETCH) {
+    // eslint-disable-next-line no-console
+    console.warn(...args);
+  }
+}
+function debugError(...args: any[]) {
+  if (__DEBUG_FETCH) {
+    // eslint-disable-next-line no-console
+    console.error(...args);
+  }
+}
+
+function parseXmlToCodeList(xmlData: string): CodeList[] {
+  const options = {
+    ignoreAttributes: false,
+  };
+
+  const parser = new XMLParser(options);
+  const jsonData = parser.parse(xmlData);
+
+  const codeList: CodeList[] = [];
+  const descriptions = jsonData["rdf:RDF"]["rdf:Description"] || [];
+  let baseIdUrl = "";
+
+  for (const desc of descriptions) {
+    if (desc["vann:preferredNamespacePrefix"]) {
+      baseIdUrl = desc["@_rdf:about"].replace("#dataset", "");
+      continue;
+    }
+
+    if (!desc["cids:hasIdentifier"] && !desc["cids:hasName"]) {
+      continue;
+    }
+
+    const sector: CodeList = {
+      "@id": desc["@_rdf:about"].includes(baseIdUrl)
+        ? desc["@_rdf:about"]
+        : baseIdUrl + desc["@_rdf:about"],
+      hasIdentifier: desc["cids:hasIdentifier"] ? desc["cids:hasIdentifier"].toString() : "",
+      hasName: desc["cids:hasName"]["#text"] ? desc["cids:hasName"]["#text"].toString() : "",
+    };
+
+    if (desc["cids:hasDescription"]) {
+      sector.hasDescription = desc["cids:hasDescription"]["#text"]
+        ? desc["cids:hasDescription"]["#text"].toString()
+        : "";
+    } else if (desc["cids:hasDefinition"]) {
+      sector.hasDescription = desc["cids:hasDefinition"]["#text"]
+        ? desc["cids:hasDefinition"]["#text"].toString()
+        : "";
+    }
+
+    codeList.push(sector);
+  }
+
+  return codeList;
+}
 
 async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
   try {
-    const currentTime = Date.now();
-
-    // Check if the data is already in the cache and not expired
-    if (inMemoryCache[url] && inMemoryCache[url].data.length > 0) {
-      // Check if cache entry is less than 24 hours old
-      if (currentTime - inMemoryCache[url].timestamp < CACHE_EXPIRATION_MS) {
-        return inMemoryCache[url].data;
-      }
-      // If expired, remove it from memory cache
-      delete inMemoryCache[url];
+    // Check if the data is already in the cache
+    if (inMemoryCache[url] && inMemoryCache[url].length > 0) {
+      return inMemoryCache[url];
     }
 
-    // Check if the data is in the Office settings
-    const cachedData = Office.context.document.settings.get(url);
+    // Check if the data is in the local storage
+    const cachedData = localStorage.getItem(url);
     if (cachedData) {
       try {
-        const parsedEntry = JSON.parse(cachedData);
-        // Check if the stored data has timestamp and is not expired
-        if (
-          parsedEntry.timestamp &&
-          parsedEntry.data &&
-          currentTime - parsedEntry.timestamp < CACHE_EXPIRATION_MS
-        ) {
-          inMemoryCache[url] = parsedEntry;
-          return parsedEntry.data;
+        const parsedData = JSON.parse(cachedData);
+
+        // Check if it's the new cache format with expiration
+        if (parsedData.data && parsedData.timestamp && parsedData.expiresIn) {
+          const now = Date.now();
+          const isExpired = now - parsedData.timestamp > parsedData.expiresIn;
+
+          if (!isExpired) {
+            // Cache is still valid
+            inMemoryCache[url] = parsedData.data;
+            return parsedData.data;
+          } else {
+            // Cache expired, remove it
+            localStorage.removeItem(url);
+          }
+        } else if (Array.isArray(parsedData)) {
+          // Old cache format - invalidate it by removing from localStorage
+          localStorage.removeItem(url);
         }
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error("Error parsing cached data:", e);
-        // Clear invalid cache
-        Office.context.document.settings.remove(url);
+      } catch (error) {
+        // Invalid JSON or corrupted cache, remove it
+        localStorage.removeItem(url);
       }
     }
 
-    // eslint-disable-next-line no-undef
-    const response = await fetch(url);
+    let xmlData: string;
+    let codeList: CodeList[] = [];
 
-    // Extract the XML data from the response
-    const xmlData = await response.text();
+    // Try to fetch from primary URL first
+    try {
+      debugLog(`Attempting to fetch from primary URL: ${url}`);
+      const response = await fetch(url);
 
-    const options = {
-      ignoreAttributes: false,
-    };
-
-    const parser = new XMLParser(options);
-    const jsonData = parser.parse(xmlData);
-
-    const codeList: CodeList[] = [];
-    const descriptions = jsonData["rdf:RDF"]["rdf:Description"] || [];
-    let baseIdUrl = "";
-
-    for (const desc of descriptions) {
-      if (desc["vann:preferredNamespacePrefix"]) {
-        baseIdUrl = desc["@_rdf:about"].replace("#dataset", "");
-        continue;
+      if (!response.ok) {
+        throw new Error(`Primary fetch failed with status: ${response.status}`);
       }
 
-      // Skip entries without name - but be more lenient with identifiers which might be missing
-      // or structured differently in some entries
-      if (!desc["cids:hasName"]) {
-        continue;
-      }
+      xmlData = await response.text();
+      codeList = parseXmlToCodeList(xmlData);
 
-      // Extract identifier more carefully, checking for various possible formats
-      let identifier = "";
-      if (desc["cids:hasIdentifier"]) {
-        // Handle both string and object formats
-        if (typeof desc["cids:hasIdentifier"] === "string") {
-          identifier = desc["cids:hasIdentifier"];
-        } else if (desc["cids:hasIdentifier"]["#text"]) {
-          identifier = desc["cids:hasIdentifier"]["#text"].toString();
-        } else {
-          // Try to stringify whatever we have
-          identifier = desc["cids:hasIdentifier"].toString();
+      debugLog(`Successfully fetched ${codeList.length} items from primary URL`);
+    } catch (primaryError) {
+      debugWarn(`Primary fetch failed for ${url}:`, primaryError);
+
+      // Try GitHub fallback if available and no cached data exists
+      const fallbackUrl = GITHUB_FALLBACK_URLS[url];
+      if (fallbackUrl) {
+        try {
+          debugLog(`Attempting fallback from GitHub: ${fallbackUrl}`);
+          const fallbackResponse = await fetch(fallbackUrl);
+
+          if (!fallbackResponse.ok) {
+            throw new Error(`Fallback fetch failed with status: ${fallbackResponse.status}`);
+          }
+
+          xmlData = await fallbackResponse.text();
+          codeList = parseXmlToCodeList(xmlData);
+
+          debugLog(`Successfully fetched ${codeList.length} items from GitHub fallback`);
+        } catch (fallbackError) {
+          debugError(`Both primary and fallback fetch failed for ${url}:`, fallbackError);
+          const pMsg = primaryError instanceof Error ? primaryError.message : String(primaryError);
+          const fMsg =
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          throw new Error(`All fetch attempts failed. Primary: ${pMsg}, Fallback: ${fMsg}`);
         }
+      } else {
+        debugError(`No fallback URL available for ${url}`);
+        throw primaryError;
       }
+    }
 
-      const sector: CodeList = {
-        "@id": desc["@_rdf:about"].includes(baseIdUrl)
-          ? desc["@_rdf:about"]
-          : baseIdUrl + desc["@_rdf:about"],
-        hasIdentifier: identifier,
-        hasName: desc["cids:hasName"]["#text"] ? desc["cids:hasName"]["#text"].toString() : "",
+    inMemoryCache[url] = codeList;
+
+    // Save the data to the local storage with expiration if codeList is not empty and has less than 200kb
+    if (codeList.length > 0) {
+      const cacheItem: CacheItem = {
+        data: codeList,
+        timestamp: Date.now(),
+        expiresIn: CACHE_EXPIRATION_TIME,
       };
 
-      if (desc["cids:hasDescription"]) {
-        sector.hasDescription = desc["cids:hasDescription"]["#text"]
-          ? desc["cids:hasDescription"]["#text"].toString()
-          : "";
-      } else if (desc["cids:hasDefinition"]) {
-        sector.hasDescription = desc["cids:hasDefinition"]["#text"]
-          ? desc["cids:hasDefinition"]["#text"].toString()
-          : "";
+      const serializedCache = JSON.stringify(cacheItem);
+      if (serializedCache.length < 200000) {
+        localStorage.setItem(url, serializedCache);
       }
-
-      codeList.push(sector);
-    }
-
-    // Create cache entry with timestamp
-    const cacheEntry: CacheEntry = {
-      data: codeList,
-      timestamp: currentTime,
-    };
-
-    inMemoryCache[url] = cacheEntry;
-
-    // Save the data to the Office settings if codeList is not empty and has less than 200kb
-    if (codeList.length > 0 && JSON.stringify(cacheEntry).length < 200000) {
-      Office.context.document.settings.set(url, JSON.stringify(cacheEntry));
-      Office.context.document.settings.saveAsync();
     }
 
     return codeList;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(`Error fetching or parsing ${url}:`, error);
+    debugError(`Error fetching or parsing ${url}:`, error);
+
+    // As a last resort, check if we have any cached data (even if expired)
+    const lastResortCache = localStorage.getItem(url);
+    if (lastResortCache) {
+      try {
+        const parsedData = JSON.parse(lastResortCache);
+        if (parsedData.data && Array.isArray(parsedData.data)) {
+          debugWarn(`Using expired cached data for ${url} as fallback`);
+          return parsedData.data;
+        }
+      } catch (cacheError) {
+        debugError(`Failed to parse last resort cache for ${url}:`, cacheError);
+      }
+    }
+
     return [];
   }
 }
@@ -156,25 +239,6 @@ export async function getCodeListByTableName(tableName: string): Promise<CodeLis
     case "Locality":
       codeList = await getAllLocalities();
       break;
-    case "StreetType":
-      codeList = [
-        { "@id": "ic:avenue", hasIdentifier: "", hasName: "Avenue" },
-        { "@id": "ic:boulevard", hasIdentifier: "", hasName: "Boulevard" },
-        { "@id": "ic:circle", hasIdentifier: "", hasName: "Circle" },
-        { "@id": "ic:crescent", hasIdentifier: "", hasName: "Crescent" },
-        { "@id": "ic:drive", hasIdentifier: "", hasName: "Drive" },
-        { "@id": "ic:road", hasIdentifier: "", hasName: "Road" },
-        { "@id": "ic:street", hasIdentifier: "", hasName: "Street" },
-      ];
-      break;
-    case "StreetDirection":
-      codeList = [
-        { "@id": "ic:north", hasIdentifier: "", hasName: "North" },
-        { "@id": "ic:south", hasIdentifier: "", hasName: "South" },
-        { "@id": "ic:east", hasIdentifier: "", hasName: "East" },
-        { "@id": "ic:west", hasIdentifier: "", hasName: "West" },
-      ];
-      break;
     default:
       throw new Error(`Table ${tableName} not found`);
   }
@@ -185,16 +249,15 @@ export async function getCodeListByTableName(tableName: string): Promise<CodeLis
 export async function getAllSectors(): Promise<CodeList[]> {
   try {
     const icnpoSectors = await fetchAndParseCodeList(
-      "https://codelist.commonapproach.org/codeLists/ICNPOsector.owl"
+      "https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl"
     );
     const statsCanSectors = await fetchAndParseCodeList(
-      "https://codelist.commonapproach.org/codeLists/StatsCanSector.owl"
+      "https://codelist.commonapproach.org/StatsCanSector/StatsCanSector.owl"
     );
 
     return [...icnpoSectors, ...statsCanSectors];
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("Error fetching sectors code list:", error);
+    debugError("Error fetching sectors code list:", error);
     return [];
   }
 }
@@ -202,13 +265,12 @@ export async function getAllSectors(): Promise<CodeList[]> {
 export async function getAllPopulationServed(): Promise<CodeList[]> {
   try {
     const populationServed = await fetchAndParseCodeList(
-      "https://codelist.commonapproach.org/codeLists/PopulationServed.owl"
+      "https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl"
     );
 
     return populationServed;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("Error fetching PopulationServed code list:", error);
+    debugError("Error fetching PopulationServed code list:", error);
     return [];
   }
 }
@@ -216,13 +278,12 @@ export async function getAllPopulationServed(): Promise<CodeList[]> {
 export async function getAllProvinceTerritory(): Promise<CodeList[]> {
   try {
     const provinceTerritory = await fetchAndParseCodeList(
-      "https://codelist.commonapproach.org/codeLists/ProvinceTerritory.owl"
+      "https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl"
     );
 
     return provinceTerritory;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("Error fetching ProvinceTerritory code list:", error);
+    debugError("Error fetching ProvinceTerritory code list:", error);
     return [];
   }
 }
@@ -230,13 +291,12 @@ export async function getAllProvinceTerritory(): Promise<CodeList[]> {
 export async function getAllOrganizationType(): Promise<CodeList[]> {
   try {
     const organizationType = await fetchAndParseCodeList(
-      "https://codelist.commonapproach.org/codeLists/OrgTypeGOC.owl"
+      "https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl"
     );
 
     return organizationType;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("Error fetching OrganizationType code list:", error);
+    debugError("Error fetching OrganizationType code list:", error);
     return [];
   }
 }
@@ -244,13 +304,12 @@ export async function getAllOrganizationType(): Promise<CodeList[]> {
 export async function getAllLocalities(): Promise<CodeList[]> {
   try {
     const localities = await fetchAndParseCodeList(
-      "https://codelist.commonapproach.org/codeLists/LocalityStatsCan.owl"
+      "https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl"
     );
 
     return localities;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("Error fetching Locality code list:", error);
+    debugError("Error fetching Locality code list:", error);
     return [];
   }
 }

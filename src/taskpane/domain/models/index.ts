@@ -10,6 +10,7 @@ import { Organization } from "./Organization";
 import { OrganizationProfile } from "./OrganizationProfile";
 import { Outcome } from "./Outcome";
 import { Person } from "./Person";
+import { Population } from "./Population";
 import { PopulationServed } from "./PopulationServed";
 import { ReportInfo } from "./ReportInfo";
 import { Sector } from "./Sector";
@@ -23,16 +24,17 @@ export const map = {
   Indicator: Indicator,
   IndicatorReport: IndicatorReport,
   Address: Address,
+  Population: Population,
 };
 
 export const mapSFFModel = {
   OrganizationProfile: OrganizationProfile,
-  FundingStatus: FundingStatus,
   TeamProfile: TeamProfile,
   EDGProfile: EDGProfile,
   EquityDeservingGroup: EquityDeservingGroup,
   Person: Person,
   Characteristic: Characteristic,
+  FundingStatus: FundingStatus,
   FundingState: FundingState,
   Sector: Sector,
   PopulationServed: PopulationServed,
@@ -66,7 +68,7 @@ export const contextUrl = [
 
 export const ignoredFields = {
   Organization: ["hasOrganizationProfile", "hasFundingStatus", "hasReportInfo"],
-  Theme: ["hasOutcome"],
+  Theme: ["hasOutcome", "hasIndicator", "From field: relatesTo"],
   Address: ["forOrganization"],
   Person: ["forOrganizationProfile"],
   TeamProfile: ["forOrganizationProfileManagementTeam", "forOrganizationProfileBoard"],
@@ -77,6 +79,7 @@ export const ignoredFields = {
   FundingState: ["forFundingStatus"],
   Sector: ["forOrganizationProfile"],
   PopulationServed: ["forOrganizationProfile", "forCharacteristic"],
+  Population: ["forIndicator", "cardinalityForIndicator"],
 };
 
 export const predefinedCodeLists = [
@@ -92,6 +95,7 @@ export * from "./Indicator";
 export * from "./IndicatorReport";
 export * from "./Organization";
 export * from "./Outcome";
+export * from "./Population";
 export * from "./Theme";
 
 // Export SFF module classes

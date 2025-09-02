@@ -1,4 +1,4 @@
-/* global document, Office, module, require */
+/* global document, Office, module, require, HTMLElement */
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import * as React from "react";
 import { createRoot } from "react-dom/client";

@@ -1,4 +1,4 @@
-/* global window, fetch, document, HTMLInputElement */
+/* global window, fetch, document, HTMLInputElement, FileReader */
 import { Button, makeStyles, Spinner, tokens } from "@fluentui/react-components";
 import {
   Add24Regular,
@@ -10,6 +10,7 @@ import { ArrowSync24Regular } from "@fluentui/react-icons/fonts";
 import * as React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useDialogContext } from "../context/DialogContext";
+import { populateSeliGLI } from "../helpers/seliGLI";
 import { importData } from "../import/import";
 import {
   createSFFModuleSheetsAndTables,
@@ -392,6 +393,55 @@ const App: React.FC<AppProps> = () => {
           }}
         >
           <FormattedMessage id="app.button.syncCodeLists" />
+        </Button>
+        <Button
+          content={intl.formatMessage({ id: "app.button.importSeliGLI" })}
+          onClick={async () => {
+            setIsLoading(true);
+            try {
+              await populateSeliGLI();
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.success",
+                  defaultMessage: "Success",
+                }),
+                intl.formatMessage({
+                  id: "app.button.importSeliGLI.success",
+                  defaultMessage:
+                    "SELI-GLI Themes, Outcomes, and Indicators imported successfully!",
+                })
+              );
+            } catch (error: any) {
+              dialog.showDialog(
+                intl.formatMessage({
+                  id: "generics.error",
+                  defaultMessage: "Error",
+                }),
+                error.message ||
+                  intl.formatMessage({
+                    id: "generics.error.message",
+                    defaultMessage: "Something went wrong",
+                  })
+              );
+            } finally {
+              setIsLoading(false);
+            }
+          }}
+          appearance="outline"
+          color="brand"
+          icon={<ArrowSync24Regular />}
+          iconPosition="before"
+          disabled={isLoading}
+          className={styles.button}
+          style={{
+            borderColor: "#1B4B9D",
+            color: "#1B4B9D",
+          }}
+        >
+          <FormattedMessage
+            id="app.button.importSeliGLI"
+            defaultMessage="Import SELI-GLI"
+          />
         </Button>
         <Button
           content={intl.formatMessage({ id: "app.button.userGuide" })}

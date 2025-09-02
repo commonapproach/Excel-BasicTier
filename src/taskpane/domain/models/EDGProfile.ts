@@ -30,9 +30,9 @@ export class EDGProfile extends Base {
       },
       {
         name: "hasSize",
-        type: "string",
-        representedType: "string",
-        defaultValue: "",
+        type: "number",
+        representedType: "number",
+        defaultValue: 0,
         unique: false,
         notNull: true,
         required: false,

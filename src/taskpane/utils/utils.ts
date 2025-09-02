@@ -1,9 +1,294 @@
-/* global document fetch setTimeout clearTimeout URL Blob */
+/* global document fetch setTimeout clearTimeout URL Blob FileReader AbortController */
 import * as jsonld from "jsonld";
 import { Options } from "jsonld";
+import { IntlShape } from "react-intl";
 import { getContext } from "../domain/fetchServer/getContext";
+import { getUnitOptions } from "../domain/fetchServer/getUnitsOfMeasure";
 import { contextUrl, map, mapSFFModel } from "../domain/models";
 
+/**
+ * Recursively converts any i72:numerical_value or numerical_value (with or without prefix)
+ * to i72:hasNumericalValue in imported data, for backward compatibility.
+ * @param obj - The object or array to process
+ * @returns The object with updated property names
+ */
+export function convertNumericalValueToHasNumericalValue(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(convertNumericalValueToHasNumericalValue);
+  if (obj && typeof obj === "object") {
+    const clone: any = { ...obj };
+    if (
+      Object.prototype.hasOwnProperty.call(clone, "i72:numerical_value") ||
+      Object.prototype.hasOwnProperty.call(clone, "numerical_value")
+    ) {
+      const value = clone["i72:numerical_value"] ?? clone["numerical_value"];
+      clone["i72:hasNumericalValue"] = value;
+      delete clone["i72:numerical_value"];
+      delete clone["numerical_value"];
+    }
+    for (const key of Object.keys(clone)) {
+      clone[key] = convertNumericalValueToHasNumericalValue(clone[key]);
+    }
+    return clone;
+  }
+  return obj;
+}
+
+/**
+ * Converts unknown unit_of_measure values to unitDescription for backward compatibility.
+ * This is used when importing Indicator objects with unknown unit values that are not
+ * in our unit of measure list. The unknown value is copied to unitDescription field
+ * so users can see and fix it manually, but only if unitDescription is not already set.
+ * @param obj - The object or array to process
+ * @param validUnitIds - Array of valid unit IDs from getUnitOptions()
+ * @returns Object with converted data and conversion flag
+ */
+export async function convertUnknownUnitToDescription(
+  obj: any,
+  validUnitIds?: string[]
+): Promise<{ data: any; converted: boolean }> {
+  let converted = false;
+  let unitIds = validUnitIds;
+  if (!unitIds) {
+    try {
+      const unitOptions: Array<{ id: string }> = await getUnitOptions();
+      unitIds = unitOptions.map((option: { id: string }) => option.id);
+    } catch (_e) {
+      return { data: obj, converted: false };
+    }
+  }
+  async function processItem(item: any): Promise<any> {
+    if (Array.isArray(item)) return Promise.all(item.map(processItem));
+    if (item && typeof item === "object") {
+      const isIndicator =
+        item["@type"] &&
+        ((typeof item["@type"] === "string" &&
+          (item["@type"] === "cids:Indicator" || item["@type"] === "Indicator")) ||
+          (Array.isArray(item["@type"]) &&
+            item["@type"].some((t: string) => t === "cids:Indicator" || t === "Indicator")));
+      let working: any = item;
+      if (isIndicator) {
+        const unitOfMeasure = item["i72:unit_of_measure"];
+        const unitDescription = item["unitDescription"];
+        if (
+          unitOfMeasure &&
+          unitIds &&
+          !unitIds.includes(unitOfMeasure) &&
+          (!unitDescription || unitDescription === "")
+        ) {
+          working = { ...item, unitDescription: unitOfMeasure };
+          converted = true;
+        }
+      }
+      const result: any = { ...working };
+      for (const key of Object.keys(result)) {
+        result[key] = await processItem(result[key]);
+      }
+      return result;
+    }
+    return item;
+  }
+  const processedData = await processItem(obj);
+  return { data: processedData, converted };
+}
+/**
+ * Checks if a string starts with a BOM (Byte Order Mark).
+ * @param text - The input string
+ * @returns true if BOM is present, false otherwise
+ */
+export function hasBOM(text: string): boolean {
+  return text.charCodeAt(0) === 0xfeff;
+}
+/**
+ * Removes BOM (Byte Order Mark) from the start of a string if present.
+ * @param text - The input string
+ * @returns The string without BOM
+ */
+export function stripBOM(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+/**
+ * Converts an old ic:Address object to the new schema:PostalAddress/cids:Address format.
+ * Returns a new object with PostalAddress fields, or the original if not an old address.
+ * If the object is not an Address, recursively checks its fields for address objects.
+ */
+export function convertIcAddressToPostalAddress(obj: any): any {
+  if (!obj || typeof obj !== "object") return obj;
+  const isAddressType =
+    (typeof obj["@type"] === "string" && obj["@type"].toLowerCase().includes("address")) ||
+    (Array.isArray(obj["@type"]) &&
+      obj["@type"].some((t: string) => t.toLowerCase().includes("address")));
+  const hasOldFields =
+    obj["ic:hasStreet"] ||
+    obj["ic:hasStreetNumber"] ||
+    obj["ic:hasStreetType"] ||
+    obj["ic:hasStreetDirection"];
+  if (isAddressType) {
+    if (hasOldFields) {
+      const streetNumber = obj["ic:hasStreetNumber"] || "";
+      const street = obj["ic:hasStreet"] || "";
+      const streetType = obj["ic:hasStreetType"] ? obj["ic:hasStreetType"].replace(/^ic:/, "") : "";
+      const streetDirection = obj["ic:hasStreetDirection"]
+        ? obj["ic:hasStreetDirection"].replace(/^ic:/, "")
+        : "";
+      const streetParts = [streetNumber, street, streetType, streetDirection].filter(Boolean);
+      const streetAddress = streetParts.join(" ").trim();
+      const newAddress: any = { streetAddress };
+      const mappings: Record<string, string> = {
+        "ic:hasUnitNumber": "extendedAddress",
+        "ic:hasCity": "addressLocality",
+        "ic:hasState": "addressRegion",
+        "ic:hasPostalCode": "postalCode",
+        "ic:hasCountry": "addressCountry",
+        "ic:hasPostOfficeBoxNumber": "postOfficeBoxNumber",
+      };
+      for (const [oldKey, newKey] of Object.entries(mappings)) {
+        if (obj[oldKey]) newAddress[newKey] = obj[oldKey];
+      }
+      if (obj["@id"]) newAddress["@id"] = obj["@id"];
+      if (obj["@type"]) {
+        if (typeof obj["@type"] === "string") {
+          newAddress["@type"] = obj["@type"].replace(/^ic:Address$/i, "cids:Address");
+        } else if (Array.isArray(obj["@type"])) {
+          newAddress["@type"] = obj["@type"].map((type: string) =>
+            type.replace(/^ic:Address$/i, "cids:Address")
+          );
+        } else {
+          newAddress["@type"] = obj["@type"];
+        }
+      }
+      return newAddress;
+    }
+    const typeAddress = { ...obj };
+    if (obj["@type"]) {
+      if (typeof obj["@type"] === "string") {
+        typeAddress["@type"] = obj["@type"].replace(/^ic:Address$/i, "cids:Address");
+      } else if (Array.isArray(obj["@type"])) {
+        typeAddress["@type"] = obj["@type"].map((t: string) =>
+          t.replace(/^ic:Address$/i, "cids:Address")
+        );
+      }
+    }
+    return typeAddress;
+  }
+  const clone: any = { ...obj };
+  for (const key of Object.keys(obj)) {
+    if (obj[key] && typeof obj[key] === "object") {
+      clone[key] = convertIcAddressToPostalAddress(obj[key]);
+    }
+  }
+  return clone;
+}
+
+/**
+ * Converts ic:hasAddress property to hasAddress in Organization objects and other objects.
+ * This handles backward compatibility for the property name change.
+ */
+export function convertIcHasAddressToHasAddress(obj: any): any {
+  if (!obj || typeof obj !== "object") return obj;
+
+  // Handle arrays
+  if (Array.isArray(obj)) {
+    return obj.map(convertIcHasAddressToHasAddress);
+  }
+
+  // Create a new object to avoid mutating the original
+  const newObj = { ...obj };
+
+  // Convert ic:hasAddress to hasAddress if it exists
+  if (newObj["ic:hasAddress"]) {
+    newObj["hasAddress"] = newObj["ic:hasAddress"];
+    delete newObj["ic:hasAddress"];
+  }
+
+  // Recursively process nested objects
+  for (const key of Object.keys(newObj)) {
+    if (newObj[key] && typeof newObj[key] === "object") {
+      newObj[key] = convertIcHasAddressToHasAddress(newObj[key]);
+    }
+  }
+
+  return newObj;
+}
+
+// Accept both describesPopulation (cids alias) and i72:cardinality_of (ontology);
+// prefer describesPopulation in stored/processed objects and remove i72:cardinality_of after aliasing.
+export function harmonizeCardinalityProperty(data: any): any {
+  const sync = (input: any): any => {
+    if (!input || typeof input !== "object") return input;
+    const cloned: any = Array.isArray(input) ? [...input] : { ...input };
+    const hasCard = Object.prototype.hasOwnProperty.call(cloned, "i72:cardinality_of");
+    const hasDesc = Object.prototype.hasOwnProperty.call(cloned, "describesPopulation");
+    if (hasCard && !hasDesc) {
+      cloned.describesPopulation = cloned["i72:cardinality_of"];
+      delete cloned["i72:cardinality_of"];
+    } else if (hasCard && hasDesc) {
+      delete cloned["i72:cardinality_of"];
+    }
+    return cloned;
+  };
+  if (Array.isArray(data)) return data.map(sync);
+  if (data && typeof data === "object") return sync(data);
+  return data;
+}
+
+/**
+ * Handles the change event of a file input element.
+ * Reads the selected file, checks if it has a ".jsonld" extension,
+ * and if so, reads the file content as text and parses it as JSON.
+ * Finally, calls the `onSuccess` callback function with the parsed JSON data.
+ * @param event - The event object triggered by the file input element.
+ * @param onSuccess - A callback function that will be called with the parsed JSON data.
+ * @param onError - A callback function that will be called if an error occurs.
+ * @returns Promise<void>
+ */
+export const handleFileChange = async (
+  event: any,
+  onSuccess: (data: any) => void,
+  onError: (error: any) => void,
+  intl: IntlShape
+): Promise<void> => {
+  const file = event.target.files[0];
+  if (file && (file.name.endsWith(".jsonld") || file.name.endsWith(".json"))) {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const target = e?.target as FileReader | null;
+        const raw = target && typeof target.result === "string" ? target.result : "";
+        const data = JSON.parse(raw as any);
+        onSuccess(data);
+      } catch (error) {
+        onError(
+          new Error(
+            intl.formatMessage({
+              id: "import.messages.error.notValidJson",
+              defaultMessage: "File is not a valid JSON/JSON-LD file.",
+            })
+          )
+        );
+      }
+    };
+    reader.readAsText(file);
+  } else {
+    onError(
+      new Error(
+        intl.formatMessage({
+          id: "import.messages.error.notJson",
+          defaultMessage: "File is not a JSON/JSON-LD file.",
+        })
+      )
+    );
+  }
+};
+
+/**
+ * Downloads a JSON-LD file by converting the data into a JSON string,
+ * creating a Blob object with the JSON string, and generating a download link for the Blob object.
+ * When the link is clicked, the file is downloaded.
+ *
+ * @param data - The data to be downloaded as a JSON-LD file.
+ * @param filename - The name of the downloaded file.
+ * @returns void
+ */
 export function downloadJSONLD(data: any, filename: string): void {
   const jsonLDString = JSON.stringify(data, null, 2);
   const blob = new Blob([jsonLDString], { type: "application/ld+json" });
@@ -19,6 +304,23 @@ export function downloadJSONLD(data: any, filename: string): void {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }, 1000); // Wait for 1 second before removing the link and revoking the URL
+}
+
+/**
+ * Executes tasks in batches, where each task operates on a batch of items.
+ * @param items - The array of items to be processed.
+ * @param task - A function that processes a batch of items and returns a Promise.
+ * @param batchSize - The number of items to process in each batch. (default: 50)
+ */
+export async function executeInBatches<T>(
+  items: T[],
+  task: (batch: T[]) => Promise<void>,
+  batchSize: number = 50
+): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await task(batch);
+  }
 }
 
 const trustedDomains = [
@@ -128,25 +430,25 @@ async function processJsonLdObject(obj: any): Promise<any[]> {
   }
 
   if (alreadyGood) {
-    // The object already uses a good context; return it as a single-element array.
-    if (Array.isArray(obj["@type"])) {
-      // eslint-disable-next-line no-param-reassign
-      obj["@type"] = findFirstRecognizedType(obj["@type"]);
+    // clone to avoid param mutation warnings
+    const base = { ...obj };
+    if (Array.isArray(base["@type"])) {
+      base["@type"] = findFirstRecognizedType(base["@type"]);
     }
-    return [obj];
+    return [base];
   } else {
     // Otherwise, process it:
     const expanded = await jsonld.expand(obj, { documentLoader: customLoader });
 
     // Fetch both contexts dynamically
     const [defaultContextData, sffContextData] = await Promise.all([
-      getContext(contextUrl[0]),
-      getContext(contextUrl[1]),
+      getContext(contextUrl[0]) as Promise<any>,
+      getContext(contextUrl[1]) as Promise<any>,
     ]);
 
     const mergedContext = [
-      (defaultContextData as any)["@context"],
-      (sffContextData as any)["@context"],
+      defaultContextData["@context"],
+      sffContextData["@context"],
     ] as unknown as jsonld.ContextDefinition;
 
     const compacted = await jsonld.compact(expanded, mergedContext, {
@@ -160,14 +462,12 @@ async function processJsonLdObject(obj: any): Promise<any[]> {
     instances = instances.map((instance) => replaceOldUrls(instance));
 
     // check if @type is an array if yes we find first recognized type
-    instances.forEach((instance) => {
+    return instances.map((instance) => {
       if (Array.isArray(instance["@type"])) {
-        // eslint-disable-next-line no-param-reassign
-        instance["@type"] = findFirstRecognizedType(instance["@type"]);
+        return { ...instance, "@type": findFirstRecognizedType(instance["@type"]) };
       }
+      return instance;
     });
-
-    return instances;
   }
 }
 
@@ -236,24 +536,20 @@ function replaceOldUrls(input: any): any {
 }
 
 function cleanupDuplicates(obj: any): any {
-  for (const key in obj) {
-    if (["@context", "@id", "@type"].includes(key)) {
-      continue;
-    }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+  const clone: any = { ...obj };
+  for (const key of Object.keys(obj)) {
+    if (["@context", "@id", "@type"].includes(key)) continue;
     if (!key.startsWith("cids:")) {
       const cidsKey = "cids:" + key;
       // eslint-disable-next-line no-prototype-builtins
-      if (obj.hasOwnProperty(cidsKey)) {
-        // eslint-disable-next-line no-param-reassign
-        delete obj[cidsKey];
-      }
+      if (Object.prototype.hasOwnProperty.call(clone, cidsKey)) delete clone[cidsKey];
     }
     if (typeof obj[key] === "object" && obj[key] !== null && !Array.isArray(obj[key])) {
-      // eslint-disable-next-line no-param-reassign
-      obj[key] = cleanupDuplicates(obj[key]);
+      clone[key] = cleanupDuplicates(obj[key]);
     }
   }
-  return obj;
+  return clone;
 }
 
 // recursively remove cids: prefix from keys
