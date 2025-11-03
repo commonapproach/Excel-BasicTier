@@ -2,66 +2,78 @@ import { Address } from "./Address";
 import { Base } from "./Base";
 import { Indicator } from "./Indicator";
 import { Outcome } from "./Outcome";
+import { OrganizationID } from "./OrganizationID";
 
 export class Organization extends Base {
-  static className = "Organization";
+	static className = "Organization";
 
-  constructor() {
-    super();
-    this._fields = [
+	constructor() {
+		super();
+		this._fields = [
+			{
+				name: "@id",
+				type: "string",
+				representedType: "string",
+				primary: true,
+				unique: true,
+				notNull: true,
+				required: true,
+				semiRequired: false,
+			},
+			{
+				name: "org:hasLegalName",
+				displayName: "hasLegalName",
+				type: "string",
+				representedType: "string",
+				unique: true,
+				notNull: true,
+				required: true,
+				semiRequired: false,
+			},
+			{
+				name: "hasAddress",
+				type: "link",
+				representedType: "array",
+				defaultValue: [],
+				link: { table: Address, field: "forOrganization" },
+				unique: false,
+				notNull: false,
+				required: false,
+				semiRequired: true,
+			},
+			{
+				name: "hasIndicator",
+				type: "link",
+				representedType: "array",
+				defaultValue: [],
+				link: { table: Indicator, field: "forOrganization" },
+				unique: false,
+				notNull: false,
+				required: false,
+				semiRequired: false,
+			},
+			{
+				name: "hasOutcome",
+				type: "link",
+				representedType: "array",
+				defaultValue: [],
+				link: { table: Outcome, field: "forOrganization" },
+				unique: false,
+				notNull: false,
+				required: false,
+				semiRequired: false,
+			},
       {
-        name: "@id",
-        type: "string",
-        representedType: "string",
-        primary: true,
-        unique: true,
-        notNull: true,
-        required: true,
-        semiRequired: false,
-      },
-      {
-        name: "org:hasLegalName",
-        displayName: "hasLegalName",
-        type: "string",
-        representedType: "string",
-        unique: true,
-        notNull: true,
-        required: true,
-        semiRequired: false,
-      },
-      {
-        name: "hasAddress",
+        name: "hasID",
         type: "link",
         representedType: "array",
         defaultValue: [],
-        link: { table: Address, field: "forOrganization" },
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: true,
-      },
-      {
-        name: "hasIndicator",
-        type: "link",
-        representedType: "array",
-        defaultValue: [],
-        link: { table: Indicator, field: "forOrganization" },
+        link: { table: OrganizationID, field: "forOrganization" },
         unique: false,
         notNull: false,
         required: false,
         semiRequired: false,
       },
-      {
-        name: "hasOutcome",
-        type: "link",
-        representedType: "array",
-        defaultValue: [],
-        link: { table: Outcome, field: "forOrganization" },
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: false,
-      },
-    ];
-  }
+		];
+	}
 }

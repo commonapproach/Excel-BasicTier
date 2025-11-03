@@ -1,7 +1,7 @@
 import { Base } from "./Base";
 
-export class Sector extends Base {
-	static className = "Sector";
+export class CorporateRegistrar extends Base {
+	static className: string = "CorporateRegistrar";
 
 	constructor() {
 		super();
@@ -11,12 +11,12 @@ export class Sector extends Base {
 				type: "string",
 				representedType: "string",
 				primary: true,
-				unique: false,
+				unique: true,
 				notNull: true,
-				required: false,
-				semiRequired: true,
+				required: true,
+				semiRequired: false,
 			},
-			{
+            {
 				name: "hasIdentifier",
 				type: "string",
 				representedType: "string",
@@ -27,18 +27,18 @@ export class Sector extends Base {
 				semiRequired: false,
 			},
 			{
-				name: "org:hasName",
+				name: "cids:hasName",
 				displayName: "hasName",
 				type: "string",
 				representedType: "string",
-				defaultValue: "",
 				unique: false,
 				notNull: true,
-				required: false,
-				semiRequired: true,
+				required: true,
+				semiRequired: false,
 			},
 			{
-				name: "hasDescription",
+				name: "cids:hasDescription",
+				displayName: "hasDescription",
 				type: "text",
 				representedType: "string",
 				defaultValue: "",

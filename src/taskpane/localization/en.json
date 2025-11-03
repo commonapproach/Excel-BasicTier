@@ -65,7 +65,7 @@
   "export.messages.warning.emptyTable": "Table <b>{tableName}</b> is empty.",
   "export.messages.warning.codeListChangesIgnored": "Changes made in the predefined code list item with @id <b>{id}</b> in table <b>{tableName}</b> will be ignored.",
   "export.messages.warning.codeListSimilarItem": "Record in table <b>{tableName}</b> with @id: <b>{recordId}</b> is similar to the predefined code list item with @id: <b>{codeListItemId}</b>.<br/>Please review the code list item before exporting, or a custom code list item will be exported.",
-  "export.messages.warning.notExported": "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be exported.",
+  "export.messages.warning.notExported": "Field <b>{fieldName}</b> in table <b>{tableName}</b> is inconsistent with the Basic Tier of the Common Impact Data Standard. This field will not be exported.",
   "createTables.messages.success": "Tables created successfully!",
   "createTables.messages.error.tableNameConflict": "Please rename the table \"{tableName}\" to \"{newTableName}\".",
   "createTables.messages.error.createTable": "Please, create table \"{tableName}\".",
