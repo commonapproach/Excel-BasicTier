@@ -213,15 +213,27 @@ export async function exportData(
           "@id": "",
         };
 
-        const isEmpty = true; // Flag to check if the row is empty
+        // Extract and set the @id
+        const idColIndex = headers.indexOf("@id");
+        if (idColIndex !== -1 && recordValues[idColIndex]) {
+          row["@id"] = recordValues[idColIndex].toString();
+        }
+
+        let isEmpty = true; // Flag to check if the row is empty
 
         // Process all fields in one pass using the cached headers
-        await processRecord(tableFields, headers, recordValues, row, isEmpty).then((result) => {
-          const [processedRow, rowIsEmpty] = result;
-          if (!rowIsEmpty) {
-            data.push(processedRow);
-          }
-        });
+        const [processedRow, rowIsEmpty] = await processRecord(
+          tableFields,
+          headers,
+          recordValues,
+          row,
+          isEmpty
+        );
+
+        // Only add non-empty rows with valid @id
+        if (!rowIsEmpty && processedRow["@id"]) {
+          data.push(processedRow);
+        }
       }
     }
 
@@ -244,24 +256,28 @@ export async function exportData(
     const indicatorUnitById: Record<string, string> = {};
     const usedUnitIris: Set<string> = new Set();
     for (const item of data) {
-      const typeVal = item["@type"]; const types = Array.isArray(typeVal) ? typeVal : [typeVal];
+      const typeVal = item["@type"];
+      const types = Array.isArray(typeVal) ? typeVal : [typeVal];
       if (types.includes("cids:Indicator")) {
         if (item["@id"]) {
           const existing = item["i72:unit_of_measure"] as string | undefined;
           const resolved = existing && existing.trim() !== "" ? existing : UNIT_IRI.UNSPECIFIED;
-            if (!existing) item["i72:unit_of_measure"] = resolved;
+          if (!existing) item["i72:unit_of_measure"] = resolved;
           indicatorUnitById[item["@id"] as string] = resolved;
           usedUnitIris.add(resolved);
         }
       }
     }
     for (const item of data) {
-      const typeVal = item["@type"]; const types = Array.isArray(typeVal) ? typeVal : [typeVal];
+      const typeVal = item["@type"];
+      const types = Array.isArray(typeVal) ? typeVal : [typeVal];
       if (types.includes("cids:IndicatorReport")) {
         const indicatorId = item["forIndicator"]; // link field name assumption
         const valueObj = item["i72:value"] as Record<string, any> | undefined;
         if (valueObj && !valueObj["i72:unit_of_measure"]) {
-          const fallback = (typeof indicatorId === "string" && indicatorUnitById[indicatorId]) || UNIT_IRI.UNSPECIFIED;
+          const fallback =
+            (typeof indicatorId === "string" && indicatorUnitById[indicatorId]) ||
+            UNIT_IRI.UNSPECIFIED;
           valueObj["i72:unit_of_measure"] = fallback;
           usedUnitIris.add(fallback);
         }
@@ -280,31 +296,37 @@ export async function exportData(
         const def = (await getUnitDefinition(iri)) || UNIT_DEFINITIONS[iri];
         if (def) {
           const already = data.some((d) => d && d["@id"] === iri);
-            if (!already) data.push({ "@context": contextUrl, ...def });
+          if (!already) data.push({ "@context": contextUrl, ...def });
           // enqueue nested cids IRIs
           for (const val of Object.values(def)) {
-            if (typeof val === "string" && val.startsWith("https://ontology.commonapproach.org/cids#")) {
+            if (
+              typeof val === "string" &&
+              val.startsWith("https://ontology.commonapproach.org/cids#")
+            ) {
               queue.push(val);
             }
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
 
     const { errors, warnings } = await validate(data, "export", intl);
 
-    // Load all data for validation checks at once
-    const warningCheckData = await loadDataForWarnings(intl, context, tables, fullMap);
-    const noExportingFields = warningCheckData.notExportedFields;
-    const emptyTableWarning = warningCheckData.emptyTableWarnings;
+// Check for unexported fields and empty tables using new helper functions
+const unexportedFieldWarnings = await checkForUnexportedFields(context, tables, fullMap, intl);
+const emptyTableWarnings = await checkForEmptyTables(context, tables, fullMap, intl);
 
-    // Include the code list warnings in the warnings
-    const allWarnings = [
-      ...noExportingFields,
-      ...warnings,
-      ...emptyTableWarning,
-      ...changeOnDefaultCodeListsWarning,
-    ].join("<hr/>");
+// Include the code list warnings in the warnings
+const allWarnings = [
+  ...unexportedFieldWarnings,
+  ...warnings,
+  ...emptyTableWarnings,
+  ...changeOnDefaultCodeListsWarning,
+]
+  .filter(Boolean)
+  .join("<hr/>");
 
     if (errors.length > 0) {
       setDialogContent(
@@ -317,10 +339,10 @@ export async function exportData(
       return;
     }
 
-  // Always deep-clean just before potentially showing warnings (but keep original for reference)
-  const cleanedData = deepCleanExportObjects(data);
+    // Always deep-clean just before potentially showing warnings (but keep original for reference)
+    const cleanedData = deepCleanExportObjects(data);
 
-  if (allWarnings.length > 0) {
+    if (allWarnings.length > 0) {
       setDialogContent(
         intl.formatMessage({
           id: "generics.warning",
@@ -338,7 +360,7 @@ export async function exportData(
               defaultMessage: "<p>Do you want to export anyway?</p>",
             }),
             () => {
-        downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
+              downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
               setDialogContent(
                 intl.formatMessage({
                   id: "generics.success",
@@ -355,7 +377,7 @@ export async function exportData(
       );
       return;
     }
-  downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
+    downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
     setDialogContent(
       intl.formatMessage({
         id: "generics.success",
@@ -369,103 +391,36 @@ export async function exportData(
   });
 }
 
-// Load all data needed for warning checks in a single batch
-async function loadDataForWarnings(
-  intl: IntlShape,
+async function checkForEmptyTables(
   context: Excel.RequestContext,
   tables: Excel.Table[],
-  fullMap: any
-) {
+  fullMap: any,
+  intl: IntlShape
+): Promise<string[]> {
+  const warnings: string[] = [];
   const relevantTables = tables.filter((table) => Object.keys(fullMap).includes(table.name));
 
-  // Queue loads for all header ranges and data ranges
+  // Queue loads for all data ranges
   const tableData = relevantTables.map((table) => {
-    const headerRange = table.getHeaderRowRange();
-    headerRange.load("values");
-
     const dataRange = table.getDataBodyRange();
-    // Only load if the range exists (not an empty table)
     if (dataRange) {
-      dataRange.load("values");
+      dataRange.load("rowCount");
     }
-
-    const cid = createInstance(table.name as ModelType | SFFModelType);
-    const internalFields = cid.getAllFields().map((item) => item.displayName || item.name);
-
-    return {
-      table,
-      headerRange,
-      dataRange,
-      internalFields,
-    };
+    return { table, dataRange };
   });
 
   // Execute a single sync for all loads
   await context.sync();
 
-  // Process the loaded data
-  const notExportedFields: string[] = [];
-  const emptyTableWarnings: string[] = [];
-
-  for (const { table, headerRange, dataRange, internalFields } of tableData) {
-    // Process header information for not exported fields
-    const headers = headerRange.values[0];
-    for (const field of headers) {
-      if (
-        Object.keys(fullMap).includes(field) ||
-        (ignoredFields as any)[table.name]?.includes(field)
-      ) {
-        continue;
-      }
-      if (!internalFields.includes(field)) {
-        notExportedFields.push(
-          intl.formatMessage(
-            {
-              id: Object.keys(map).includes(table.name)
-                ? "export.messages.warning.fieldWillNotBeExported"
-                : "export.messages.warning.notExported",
-              defaultMessage:
-                "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be exported",
-            },
-            { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` }
-          ) as string
-        );
-      }
-    }
-
-    // Process data range for empty tables
-    if (dataRange) {
-      const values = dataRange.values;
-      let isEmpty = true;
-
-      for (const row of values) {
-        if (row.some((cell) => cell)) {
-          isEmpty = false;
-          break;
-        }
-      }
-
-      if (isEmpty) {
-        emptyTableWarnings.push(
-          intl.formatMessage(
-            {
-              id: "export.messages.warning.emptyTable",
-              defaultMessage: "<Table <b>${tableName}</b> is empty",
-            },
-            {
-              tableName: table.name,
-              b: (str) => `<b>${str}</b>`,
-            }
-          )
-        );
-      }
-    } else {
-      // If dataRange doesn't exist, the table is empty
-      emptyTableWarnings.push(
+  // Check each table
+  for (const { table, dataRange } of tableData) {
+    // If dataRange doesn't exist OR rowCount is 0, the table is empty
+    if (!dataRange || dataRange.rowCount === 0) {
+      warnings.push(
         intl.formatMessage(
           {
             id: "export.messages.warning.emptyTable",
-            defaultMessage: "<Table <b>${tableName}</b> is empty",
+            defaultMessage: "Table <b>{tableName}</b> is empty",
           },
           {
             tableName: table.name,
@@ -476,10 +431,68 @@ async function loadDataForWarnings(
     }
   }
 
-  return {
-    notExportedFields,
-    emptyTableWarnings,
-  };
+  return warnings;
+}
+
+// Improved function to check for unexported fields
+async function checkForUnexportedFields(
+  context: Excel.RequestContext,
+  tables: Excel.Table[],
+  fullMap: any,
+  intl: IntlShape
+): Promise<string[]> {
+  const warnings: string[] = [];
+  const relevantTables = tables.filter((table) => Object.keys(fullMap).includes(table.name));
+
+  // Queue loads for all header ranges
+  const tableData = relevantTables.map((table) => {
+    const headerRange = table.getHeaderRowRange();
+    headerRange.load("values");
+
+    const cid = createInstance(table.name as ModelType | SFFModelType);
+    const internalFields = cid.getAllFields().map((item) => item.displayName || item.name);
+
+    return {
+      table,
+      headerRange,
+      internalFields,
+    };
+  });
+
+  // Execute a single sync for all loads
+  await context.sync();
+
+  // Check each table for unexported fields
+  for (const { table, headerRange, internalFields } of tableData) {
+    const headers = headerRange.values[0];
+    for (const field of headers) {
+      // Skip if it's a table name or in ignoredFields
+      if (
+        Object.keys(fullMap).includes(field) ||
+        (ignoredFields as any)[table.name]?.includes(field)
+      ) {
+        continue;
+      }
+
+      // Warn if field is not in the model
+      if (!internalFields.includes(field)) {
+        warnings.push(
+          intl.formatMessage(
+            {
+              id: Object.keys(map).includes(table.name)
+                ? "export.messages.warning.fieldWillNotBeExported"
+                : "export.messages.warning.notExported",
+              defaultMessage:
+                "Field <b>{fieldName}</b> in table <b>{tableName}</b> is inconsistent with the Basic Tier of the Common Impact Data Standard. This field will not be exported.",
+            },
+            { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` }
+          ) as string
+        );
+      }
+    }
+  }
+
+  return warnings;
 }
 
 // New helper function to process records more efficiently
@@ -665,12 +678,15 @@ function deepCleanExportObjects(items: TableInterface[]): TableInterface[] {
   const keepEmptyKey = (key: string) => key === "i72:hasNumericalValue";
   const clean = (value: any, parentKey?: string): any => {
     if (Array.isArray(value)) {
-      const arr = value.map((v) => clean(v)).filter((v) => {
-        if (v === null || v === undefined) return false;
-        if (Array.isArray(v) && v.length === 0) return false;
-        if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
-        return true;
-      });
+      const arr = value
+        .map((v) => clean(v))
+        .filter((v) => {
+          if (v === null || v === undefined) return false;
+          if (Array.isArray(v) && v.length === 0) return false;
+          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0)
+            return false;
+          return true;
+        });
       return arr;
     }
     if (value && typeof value === "object") {
@@ -680,7 +696,8 @@ function deepCleanExportObjects(items: TableInterface[]): TableInterface[] {
           if (v === null || v === undefined) return false;
           if (typeof v === "string" && v.trim() === "" && !keepEmptyKey(k)) return false;
           if (Array.isArray(v) && v.length === 0) return false;
-          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
+          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0)
+            return false;
           return true;
         });
       return Object.fromEntries(objEntries);
@@ -817,4 +834,3 @@ async function getObjectFieldsRecursively(
 
   return [row, isEmpty];
 }
-/* eslint-enable no-param-reassign */
