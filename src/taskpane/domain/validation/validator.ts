@@ -36,10 +36,11 @@ const KNOWN_EXTERNAL_TYPES = new Set<string>([
 	"i72:Population",
 ]);
 
-// Helper: extract the primary ontology type we care about (cids: or sff:) from @type which may be string or array
+
+// Helper: extract the primary ontology type we care about (cids:, sff:, or org:) from @type which may be string or array
 function getPrimaryStandardType(typeVal: any): string | null {
 	if (!typeVal) return null;
-	const isTarget = (t: string) => t.startsWith("cids:") || t.startsWith("sff:");
+	const isTarget = (t: string) => t.startsWith("cids:") || t.startsWith("sff:") || t.startsWith("org:");
 	if (typeof typeVal === "string") return isTarget(typeVal) ? typeVal : null;
 	if (Array.isArray(typeVal)) {
 		const found = typeVal.find((t) => typeof t === "string" && isTarget(t));
@@ -110,98 +111,108 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
 			uniqueRecords[tableName] = new Set();
 		}
 
-		//check if required fields are present
-		for (const field of cid.getAllFields()) {
-			// For link fields, we defer presence/emptiness reporting to validateLinkedFields to avoid duplicate messages
-			if (field.type === "link") continue;
-			if (
-				field.required &&
-				!Object.keys(data)
-					.map((d) => (d.indexOf(":") !== -1 ? d.split(":")[1] : d))
-					.includes(field.name.indexOf(":") !== -1 ? field.name.split(":")[1] : field.name)
-			) {
-				if (operation === "import" && field.name !== "@id") {
-					validatorWarnings.add(
-						intl.formatMessage(
-							{
-								id: "validation.messages.missingRequiredField",
-								defaultMessage:
-									"Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
-							},
-							{
-								fieldName: field.displayName || field.name,
-								tableName,
-								b: (str) => `<b>${str}</b>`,
-							}
-						)
-					);
-				} else {
-					validatorErrors.add(
-						intl.formatMessage(
-							{
-								id: "validation.messages.missingRequiredField",
-								defaultMessage:
-									"Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
-							},
-							{
-								fieldName: field.displayName || field.name,
-								tableName,
-								b: (str) => `<b>${str}</b>`,
-							}
-						)
-					);
-				}
+	//check if required fields are present
+	for (const field of cid.getAllFields()) {
+		// For link fields, we defer presence/emptiness reporting to validateLinkedFields to avoid duplicate messages
+		if (field.type === "link") continue;
+		
+		// Check for field existence with OR without prefix
+		const fieldName = field.name;
+		const unprefixedName = fieldName.includes(":") ? fieldName.split(":")[1] : fieldName;
+		const displayName = field.displayName || unprefixedName;
+		const fieldExists = data[fieldName] !== undefined || data[displayName] !== undefined || data[unprefixedName] !== undefined;
+		
+		if (field.required && !fieldExists) {
+			if (operation === "import" && field.name !== "@id") {
+				validatorWarnings.add(
+					intl.formatMessage(
+						{
+							id: "validation.messages.missingRequiredField",
+							defaultMessage:
+								"Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
+						},
+						{
+							fieldName: field.displayName || field.name,
+							tableName,
+							b: (str) => `<b>${str}</b>`,
+						}
+					)
+				);
+			} else {
+				validatorErrors.add(
+					intl.formatMessage(
+						{
+							id: "validation.messages.missingRequiredField",
+							defaultMessage:
+								"Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
+						},
+						{
+							fieldName: field.displayName || field.name,
+							tableName,
+							b: (str) => `<b>${str}</b>`,
+						}
+					)
+				);
 			}
 		}
+	}
 
-		for (const field of cid.getAllFields()) {
-			if (field.semiRequired) {
-				if (field.type === "link") continue; // Avoid duplicate link warnings; handled in validateLinkedFields
-				if (
-					!Object.keys(data)
-						.map((d) => (d.indexOf(":") !== -1 ? d.split(":")[1] : d))
-						.includes(field.name.indexOf(":") !== -1 ? field.name.split(":")[1] : field.name)
-				) {
-					validatorWarnings.add(
-						intl.formatMessage(
-							{
-								id: "validation.messages.missingRequiredField",
-								defaultMessage:
-									"Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
-							},
-							{
-								fieldName: field.displayName || field.name,
-								tableName,
-								b: (str) => `<b>${str}</b>`,
-							}
-						)
-					);
-				}
-				// @ts-ignore
-				if (data[field.name]?.length === 0) {
-					validatorWarnings.add(
-						intl.formatMessage(
-							{
-								id: "validation.messages.emptyField",
-								defaultMessage: "Field <b>{fieldName}</b> is empty on table <b>{tableName}</b>",
-							},
-							{
-								fieldName: field.displayName || field.name,
-								tableName,
-								b: (str) => `<b>${str}</b>`,
-							}
-						)
-					);
-				}
+	for (const field of cid.getAllFields()) {
+		if (field.semiRequired) {
+			if (field.type === "link") continue; // Avoid duplicate link warnings; handled in validateLinkedFields
+			
+			// Check for field existence with OR without prefix
+			const fieldName = field.name;
+			const unprefixedName = fieldName.includes(":") ? fieldName.split(":")[1] : fieldName;
+			const displayName = field.displayName || unprefixedName;
+			const fieldExists = data[fieldName] !== undefined || data[displayName] !== undefined || data[unprefixedName] !== undefined;
+			
+			if (!fieldExists) {
+				validatorWarnings.add(
+					intl.formatMessage(
+						{
+							id: "validation.messages.missingRequiredField",
+							defaultMessage:
+								"Required field <b>{fieldName}</b> is missing on table <b>{tableName}</b>",
+						},
+						{
+							fieldName: field.displayName || field.name,
+							tableName,
+							b: (str) => `<b>${str}</b>`,
+						}
+					)
+				);
+			}
+			// Check if field exists but is empty
+			const fieldValue = data[fieldName] || data[displayName] || data[unprefixedName];
+			// @ts-ignore
+			if (fieldValue && fieldValue?.length === 0) {
+				validatorWarnings.add(
+					intl.formatMessage(
+						{
+							id: "validation.messages.emptyField",
+							defaultMessage: "Field <b>{fieldName}</b> is empty on table <b>{tableName}</b>",
+						},
+						{
+							fieldName: field.displayName || field.name,
+							tableName,
+							b: (str) => `<b>${str}</b>`,
+						}
+					)
+				);
 			}
 		}
+	}
 
 		for (const field of cid.getAllFields()) {
+			const fieldName = field.name;
+			const unprefixedFieldName = typeof fieldName === 'string' && fieldName.includes(":") ? fieldName.split(":")[1] : fieldName;
+			
 			if (
 				field.notNull &&
 				operation === "export" &&
-				((!data[field.name] && !data[field.name.split(":")[1]]) ||
-					isFieldValueNullOrEmpty(data[field.name] || data[field.name.split(":")[1]]))
+				((!data[fieldName] && !data[unprefixedFieldName]) ||
+					isFieldValueNullOrEmpty(data[fieldName] || data[unprefixedFieldName]))
 			) {
 				const msg = intl
 					.formatMessage(
@@ -219,7 +230,8 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
 					.toString();
 				
 				// Special handling for number fields that can be zero (EDGProfile.hasSize, TeamProfile.hasTeamSize)
-				const fieldValue = data[field.name] || data[field.name.split(":")[1]];
+				// Special handling for number fields that can be zero (EDGProfile.hasSize, TeamProfile.hasTeamSize)
+				const fieldValue = data[fieldName] || data[unprefixedFieldName];
 				const isNumberFieldWithZero = field.type === "number" && fieldValue === 0;
 				
 				// Allow zero values for hasSize and hasTeamSize - treat as warning instead of error
@@ -636,8 +648,8 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
 	const typeVal = data["@type"];
 	let mainType: string | null = null;
 
-	// Recognize both cids: and sff: namespaces
-	const isStandard = (t: string) => t.startsWith("cids:") || t.startsWith("sff:");
+	// Recognize cids:, sff:, and org: namespaces
+	const isStandard = (t: string) => t.startsWith("cids:") || t.startsWith("sff:") || t.startsWith("org:");
 	if (typeof typeVal === "string") {
 		mainType = isStandard(typeVal) ? typeVal : null;
 	} else if (Array.isArray(typeVal) && typeVal.length > 0) {
@@ -760,22 +772,39 @@ async function validateLinkedFields(
 		const linkedFields = fields.filter((field) => field.type === "link");
 		linkedFields.forEach(async (field) => {
 			const fieldName = field.name;
-			if (!data[fieldName]) {
-				data[fieldName] = [];
+			const unprefixedName = fieldName.includes(":") ? fieldName.split(":")[1] : fieldName;
+			const displayName = field.displayName || unprefixedName;
+			
+			// Find which version of the field name exists in the data
+			let actualFieldName = fieldName;
+			if (data[fieldName] !== undefined) {
+				actualFieldName = fieldName;
+			} else if (data[displayName] !== undefined) {
+				actualFieldName = displayName;
+			} else if (data[unprefixedName] !== undefined) {
+				actualFieldName = unprefixedName;
+			}
+			
+			if (!data[actualFieldName]) {
+				data[actualFieldName] = [];
 			}
 
 			let isString = false;
-			if (!Array.isArray(data[fieldName])) {
-				if (typeof data[fieldName] === "string") {
+			if (!Array.isArray(data[actualFieldName])) {
+				if (typeof data[actualFieldName] === "string") {
 					isString = true;
+					// Convert string to array
+					const stringValue = data[actualFieldName] as string;
+					data[actualFieldName] = stringValue.length > 0 ? stringValue.split(", ") : [];
+				} else {
+					data[actualFieldName] = [];
 				}
-				data[fieldName] =
-					typeof data[fieldName] === "string" && data[fieldName].length > 0
-						? [...data[fieldName].split(", ")]
-						: [];
 			}
 
-			if (data[fieldName].length === 0) {
+			// At this point, data[actualFieldName] is guaranteed to be an array
+			const fieldArray: string[] = data[actualFieldName] as string[];
+
+			if (fieldArray.length === 0) {
 				const msg = intl
 					.formatMessage(
 						{
@@ -785,7 +814,7 @@ async function validateLinkedFields(
 						{
 							tableName,
 							name: (data["org:hasLegalName"] || data["hasLegalName"] || data["hasName"]) as string,
-							fieldName,
+							fieldName: displayName,
 							b: (str) => `<b>${str}</b>`,
 						}
 					)
@@ -797,7 +826,7 @@ async function validateLinkedFields(
 				}
 			}
 
-			if (isString && data[fieldName].length > 1) {
+			if (isString && fieldArray.length > 1) {
 				if (operation === "import") {
 					validatorWarnings.add(
 						intl.formatMessage(
@@ -807,10 +836,10 @@ async function validateLinkedFields(
 									"Multiple values found in field <b>{fieldName}</b> at id {dataId} on table <b>{tableName}</b>. Only the first value {firstValue} will be considered",
 							},
 							{ 
-								fieldName,
+								fieldName: displayName,
 								dataId: data["@id"],
 								tableName,
-								firstValue: data[fieldName][0],
+								firstValue: fieldArray[0],
 								b: (str) => `<b>${str}</b>`,
 							}
 						)
@@ -824,7 +853,7 @@ async function validateLinkedFields(
 									"Multiple values found in field <b>{fieldName}</b> at id {dataId} on table <b>{tableName}</b>.",
 							},
 							{
-								fieldName,
+								fieldName: displayName,
 								dataId: data["@id"],
 								tableName,
 								b: (str) => `<b>${str}</b>`,
@@ -832,7 +861,7 @@ async function validateLinkedFields(
 						)
 					);
 				}
-				data[fieldName] = [data[fieldName][0]];
+				data[actualFieldName] = [fieldArray[0]];
 			}
 
 			const linkedTable = field.link?.table.className;
@@ -862,7 +891,7 @@ async function validateLinkedFields(
 				}
 			}
 
-			data[fieldName].forEach((item) => {
+			fieldArray.forEach((item: string) => {
 				if (!linkedIds.includes(item)) {
 					validatorWarnings.add(
 						intl.formatMessage(
@@ -874,7 +903,7 @@ async function validateLinkedFields(
 							{
 								tableName,
 								name: data["org:hasLegalName"] || data["hasLegalName"] || data["hasName"],
-								fieldName,
+								fieldName: displayName,
 								item,
 								linkedTable,
 								b: (str: string) => `<b>${str}</b>`,
@@ -885,7 +914,7 @@ async function validateLinkedFields(
 			});
 
 			if ((isString || field.representedType === "string") && operation === "export") {
-				data[fieldName] = data[fieldName].length > 0 ? data[fieldName][0] : "";
+				data[actualFieldName] = fieldArray.length > 0 ? fieldArray[0] : "";
 			}
 		});
 	}
