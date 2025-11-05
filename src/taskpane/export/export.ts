@@ -17,6 +17,45 @@ import { Base as BaseModel, FieldType } from "../domain/models/Base";
 import { validate } from "../domain/validation/validator";
 import { downloadJSONLD } from "../utils/utils";
 
+function removeNamespacePrefixesFromExport(items: any[]): any[] {
+  return items.map(item => {
+    if (!item || typeof item !== 'object') return item;
+    
+    const cleaned: any = {};
+    
+    for (const [key, value] of Object.entries(item)) {
+      let newKey = key;
+      
+      // Preserve JSON-LD keywords (@context, @id, @type, etc.)
+      if (key.startsWith('@')) {
+        cleaned[key] = value;
+        continue;
+      }
+      
+      // Remove namespace prefix from property names
+      // e.g., "rdfs:label" => "label", "i72:value" => "value"
+      if (key.includes(':')) {
+        const parts = key.split(':');
+        if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0) {
+          newKey = parts[1];
+        }
+      }
+      
+      // Recursively clean nested objects
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        cleaned[newKey] = removeNamespacePrefixesFromExport([value])[0];
+      } else if (Array.isArray(value)) {
+        // For arrays, check if items are objects that need cleaning
+        const hasObjects = value.some(v => v && typeof v === 'object');
+        cleaned[newKey] = hasObjects ? removeNamespacePrefixesFromExport(value) : value;
+      } else {
+        cleaned[newKey] = value;
+      }
+    }
+    
+    return cleaned;
+  });
+}
 /* global Excel*/
 export async function exportData(
   intl: IntlShape,
@@ -341,6 +380,7 @@ const allWarnings = [
 
     // Always deep-clean just before potentially showing warnings (but keep original for reference)
     const cleanedData = deepCleanExportObjects(data);
+    const finalData = removeNamespacePrefixesFromExport(cleanedData);
 
     if (allWarnings.length > 0) {
       setDialogContent(
@@ -360,7 +400,7 @@ const allWarnings = [
               defaultMessage: "<p>Do you want to export anyway?</p>",
             }),
             () => {
-              downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
+              downloadJSONLD(finalData, `${getFileName(orgName)}.json`);
               setDialogContent(
                 intl.formatMessage({
                   id: "generics.success",
@@ -377,7 +417,7 @@ const allWarnings = [
       );
       return;
     }
-    downloadJSONLD(cleanedData, `${getFileName(orgName)}.json`);
+    downloadJSONLD(finalData, `${getFileName(orgName)}.json`);
     setDialogContent(
       intl.formatMessage({
         id: "generics.success",

@@ -3,7 +3,9 @@
 
 export function getPrimaryStandardType(typeVal: any): string | null {
   if (!typeVal) return null;
-  const isTarget = (t: string) => typeof t === "string" && (t.startsWith("cids:") || t.startsWith("sff:"));
+  const isTarget = (t: string) => 
+    typeof t === "string" && 
+    (t.startsWith("cids:") || t.startsWith("sff:") || t.startsWith("org:"));
   if (typeof typeVal === "string") return isTarget(typeVal) ? typeVal : null;
   if (Array.isArray(typeVal)) {
     const found = typeVal.find(isTarget);

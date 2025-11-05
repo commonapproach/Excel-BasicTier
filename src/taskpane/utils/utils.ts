@@ -479,7 +479,7 @@ export async function parseJsonLd(jsonLdData: any[]): Promise<any[]> {
   for (const obj of jsonLdData) {
     let results = await processJsonLdObject(obj);
     results = cleanupDuplicates(results);
-    results = removeCidsPrefix(results);
+    results = removeAllNamespacePrefixes(results);
     processedInstances.push(...results);
   }
   return processedInstances;
@@ -553,20 +553,37 @@ function cleanupDuplicates(obj: any): any {
 }
 
 // recursively remove cids: prefix from keys
-function removeCidsPrefix(obj: any): any {
+function removeAllNamespacePrefixes(obj: any): any {
   if (Array.isArray(obj)) {
-    return obj.map((item) => removeCidsPrefix(item));
+    return obj.map((item) => removeAllNamespacePrefixes(item));
   } else if (obj !== null && typeof obj === "object") {
     const newObj: any = {};
+    
     for (const [key, value] of Object.entries(obj)) {
       let newKey = key;
-      if (key.startsWith("cids:")) {
-        newKey = key.substring(5);
+      
+      // Preserve JSON-LD keywords (start with @)
+      if (key.startsWith("@")) {
+        newObj[key] = removeAllNamespacePrefixes(value);
+        continue;
       }
-      newObj[newKey] = removeCidsPrefix(value);
+      
+      // Remove any namespace prefix (anything before and including ":")
+      if (key.includes(":")) {
+        const parts = key.split(":");
+        if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0) {
+          // Remove the prefix (e.g., "rdfs:label" => "label")
+          newKey = parts[1];
+        }
+      }
+      
+      // Recursively process the value
+      newObj[newKey] = removeAllNamespacePrefixes(value);
     }
+    
     return newObj;
   }
+  
   return obj;
 }
 
