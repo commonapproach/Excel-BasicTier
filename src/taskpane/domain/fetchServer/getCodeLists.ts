@@ -126,26 +126,32 @@ function parseTurtleToCodeList(ttlData: string): CodeList[] {
 		if (entryMatch) {
 			// Save previous entry if it exists and has a name
 			if (currentEntry && currentEntry.hasName) {
-				codeList.push(currentEntry);
+				// Check if this looks like a metadata/header entry
+				const looksLikeMetadata = 
+					currentEntry.hasIdentifier === 'IRISImpactCategories' ||
+					currentEntry.hasIdentifier === 'CanadianCorporateRegistries' ||
+					currentEntry.hasIdentifier === 'EquityDeservingGroupsESDC' ||
+					currentEntry.hasName.includes('Codelist') ||
+					currentEntry.hasName.includes('Code List');
+				
+				if (!looksLikeMetadata) {
+					codeList.push(currentEntry);
+				} else {
+					console.log(`Skipping metadata entry: ${currentEntry.hasIdentifier} - ${currentEntry.hasName}`);
+				}
 			}
 			
 			const id = entryMatch[1];
 			
-			// Skip dataset definition and codelist metadata headers
-			// These are entries that describe the codelist itself, not actual code values
-			// Examples: :IRISImpactCategories, :CanadianCorporateRegistries, :EquityDeservingGroupsESDC
-			// Characteristics: Usually the ID matches the last part of the base URI
-			const baseUriLastPart = baseUri.split('/').filter(p => p).pop() || '';
-			const isMetadataEntry = id === 'dataset' || id === baseUriLastPart;
-			
-			if (isMetadataEntry) {
-				console.log(`Skipping metadata entry: ${id}`);
+			// Always skip 'dataset' entries
+			if (id === 'dataset') {
+				console.log(`Skipping dataset entry`);
 				currentEntry = null;
 				currentBlock = '';
 				continue;
 			}
 			
-			// Start new entry
+			// Start new entry - we'll check if it's metadata later after parsing properties
 			currentEntry = {
 				"@id": baseUri + id,
 				hasIdentifier: id, // Use ID as fallback identifier
@@ -184,7 +190,22 @@ function parseTurtleToCodeList(ttlData: string): CodeList[] {
 	
 	// Don't forget to add the last entry
 	if (currentEntry && currentEntry.hasName) {
-		codeList.push(currentEntry);
+		// Check if this looks like a metadata/header entry
+		// Metadata entries typically have:
+		// 1. hasIdentifier that matches the codelist name (e.g., "IRISImpactCategories")
+		// 2. hasName that contains words like "Codelist", "Categories", "Registries"
+		const looksLikeMetadata = 
+			currentEntry.hasIdentifier === 'IRISImpactCategories' ||
+			currentEntry.hasIdentifier === 'CanadianCorporateRegistries' ||
+			currentEntry.hasIdentifier === 'EquityDeservingGroupsESDC' ||
+			currentEntry.hasName.includes('Codelist') ||
+			currentEntry.hasName.includes('Code List');
+		
+		if (!looksLikeMetadata) {
+			codeList.push(currentEntry);
+		} else {
+			console.log(`Skipping metadata entry: ${currentEntry.hasIdentifier} - ${currentEntry.hasName}`);
+		}
 	}
 	
 	console.log(`Total entries parsed: ${codeList.length}`);
@@ -345,8 +366,11 @@ export async function getAllSectors(): Promise<CodeList[]> {
 		const statsCanSectors = await fetchAndParseCodeList(
 			"https://codelist.commonapproach.org/StatsCanSector/StatsCanSector.owl"
 		);
+		const irisSectors = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl"
+		);
 
-		return [...icnpoSectors, ...statsCanSectors];
+		return [...icnpoSectors, ...statsCanSectors, ...irisSectors];
 	} catch (error) {
 		console.error("Error fetching sectors code list:", error);
 		return [];
