@@ -1,5 +1,9 @@
 import { XMLParser } from "fast-xml-parser";
 
+// ============================================================================
+// TYPE DEFINITIONS
+// ============================================================================
+
 export interface CodeList {
 	"@id": string;
 	hasIdentifier: string;
@@ -13,472 +17,164 @@ interface CacheItem {
 	expiresIn: number;
 }
 
-const inMemoryCache: { [key: string]: CodeList[] } = {};
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 const CACHE_EXPIRATION_TIME = 24 * 60 * 60 * 1000; // 24 hours
 
-// GitHub fallback URLs mapping
-const GITHUB_FALLBACK_URLS: { [key: string]: string } = {
-	"https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl":
-		"https://raw.githubusercontent.com/commonapproach.org/CodeLists/main/ICNPOsector/ICNPOsector.owl",
-	"https://codelist.commonapproach.org/StatsCanSector/StatsCanSector.owl":
+/** Primary codelist URLs from commonapproach.org */
+const CODELIST_URLS = {
+	ICNPOSector: "https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl",
+	StatsCanSector: "https://codelist.commonapproach.org/StatsCanSector/StatsCanSector.owl",
+	PopulationServed: "https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl",
+	ProvinceTerritory: "https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl",
+	OrganizationType: "https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl",
+	Locality: "https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl",
+	CorporateRegistrar: "https://codelist.commonapproach.org/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl",
+	IRISImpactCategory: "https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl",
+	EquityDeservingGroup: "https://codelist.commonapproach.org/EquityDeservingGroupsESDC/EquityDeservingGroupsESDC.ttl",
+} as const;
+
+/** GitHub fallback URLs for redundancy */
+const GITHUB_FALLBACK_URLS: Record<string, string> = {
+	[CODELIST_URLS.ICNPOSector]: 
+		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/ICNPOsector/ICNPOsector.owl",
+	[CODELIST_URLS.StatsCanSector]: 
 		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/StatsCanSector/StatsCanSector.owl",
-	"https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl":
+	[CODELIST_URLS.PopulationServed]: 
 		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/PopulationServed/PopulationServed.owl",
-	"https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl":
+	[CODELIST_URLS.ProvinceTerritory]: 
 		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/ProvinceTerritory/ProvinceTerritory.owl",
-	"https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl":
+	[CODELIST_URLS.OrganizationType]: 
 		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/OrgTypeGOC/OrgTypeGOC.owl",
-	"https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl":
+	[CODELIST_URLS.Locality]: 
 		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/Locality/LocalityStatsCan.owl",
-	"https://codelist.commonapproach.org/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl":
-		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl",	
-	"https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl":
+	[CODELIST_URLS.CorporateRegistrar]: 
+		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl",
+	[CODELIST_URLS.IRISImpactCategory]: 
 		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/IRISImpactCategories/IRISImpactCategories.ttl",
-	"https://codelist.commonapproach.org/EquityDeservingGroupsESDC/EquityDeservingGroupsESDC.ttl":
+	[CODELIST_URLS.EquityDeservingGroup]: 
 		"https://raw.githubusercontent.com/commonapproach/CodeLists/main/EquityDeservingGroupsESDC/EquityDeservingGroupsESDC.ttl",
 };
 
-function parseXmlToCodeList(data: string): CodeList[] {
-	const options = {
-		ignoreAttributes: false,
-	};
+/** Metadata identifiers to skip during parsing */
+const METADATA_IDENTIFIERS = new Set([
+	'dataset',
+	'IRISImpactCategories',
+	'CanadianCorporateRegistries',
+	'EquityDeservingGroupsESDC',
+	'ICNPOsector',
+	'StatsCanSector',
+	'PopulationServed',
+	'ProvinceTerritory',
+	'OrgTypeGOC',
+	'LocalityStatsCan',
+]);
 
-	const parser = new XMLParser(options);
-	const jsonData = parser.parse(data);
+/** Keywords that indicate a metadata entry */
+const METADATA_KEYWORDS = ['Codelist', 'Code List', 'Categories', 'Registries', 'Dataset'];
 
-	const codeList: CodeList[] = [];
-	const descriptions = jsonData["rdf:RDF"]["rdf:Description"] || [];
-	let baseIdUrl = "";
+// ============================================================================
+// CACHE MANAGEMENT
+// ============================================================================
 
-	for (let desc of descriptions) {
-		if (desc["vann:preferredNamespacePrefix"]) {
-			baseIdUrl = desc["@_rdf:about"].replace("#dataset", "");
-			continue;
-		}
+const inMemoryCache: Record<string, CodeList[]> = {};
 
-		if (!desc["cids:hasIdentifier"] && !desc["cids:hasName"]) {
-			continue;
-		}
-
-		const sector: CodeList = {
-			"@id": desc["@_rdf:about"].includes(baseIdUrl)
-				? desc["@_rdf:about"]
-				: baseIdUrl + desc["@_rdf:about"],
-			hasIdentifier: desc["cids:hasIdentifier"] ? desc["cids:hasIdentifier"].toString() : "",
-			hasName: desc["cids:hasName"]["#text"] ? desc["cids:hasName"]["#text"].toString() : "",
-		};
-
-		// Try multiple predicates for description field (mapping to hasDescription in output)
-		if (desc["cids:hasDescription"]) {
-			sector.hasDescription = desc["cids:hasDescription"]["#text"]
-				? desc["cids:hasDescription"]["#text"].toString()
-				: "";
-		} else if (desc["cids:hasDefinition"]) {
-			sector.hasDescription = desc["cids:hasDefinition"]["#text"]
-				? desc["cids:hasDefinition"]["#text"].toString()
-				: "";
-		} else if (desc["cids:hasCharacteristic"]) {
-			// EDG uses hasCharacteristic instead of hasDescription
-			sector.hasDescription = desc["cids:hasCharacteristic"]["#text"]
-				? desc["cids:hasCharacteristic"]["#text"].toString()
-				: "";
-		}
-
-		codeList.push(sector);
+/**
+ * Retrieves cached data from memory or localStorage
+ */
+function getCachedData(url: string): CodeList[] | null {
+	// Check in-memory cache first (fastest)
+	if (inMemoryCache[url]?.length > 0) {
+		console.log(`✅ Cache hit (memory): ${url}`);
+		return inMemoryCache[url];
 	}
 
-	return codeList;
+	// Check localStorage
+	const cachedData = localStorage.getItem(url);
+	if (!cachedData) {
+		return null;
+	}
+
+	try {
+		const parsedData = JSON.parse(cachedData) as CacheItem;
+
+		// Validate cache structure
+		if (!parsedData.data || !parsedData.timestamp || !parsedData.expiresIn) {
+			console.warn(`⚠️ Invalid cache structure for ${url}, removing`);
+			localStorage.removeItem(url);
+			return null;
+		}
+
+		// Check expiration
+		const isExpired = Date.now() - parsedData.timestamp > parsedData.expiresIn;
+		if (isExpired) {
+			console.log(`⏰ Cache expired for ${url}, removing`);
+			localStorage.removeItem(url);
+			return null;
+		}
+
+		// Cache is valid - store in memory for faster access
+		console.log(`✅ Cache hit (localStorage): ${url}`);
+		inMemoryCache[url] = parsedData.data;
+		return parsedData.data;
+	} catch (error) {
+		console.error(`❌ Error parsing cached data for ${url}:`, error);
+		localStorage.removeItem(url);
+		return null;
+	}
 }
 
 /**
- * Enhanced Turtle parser that handles multiple description predicates
- * Maps hasDefinition, hasCharacteristic, and other predicates to hasDescription
+ * Stores data in both memory and localStorage cache
  */
-function parseTurtleToCodeList(ttlData: string): CodeList[] {
-	const codeList: CodeList[] = [];
-	
-	// Extract base URI
-	let baseUri = "https://codelist.commonapproach.org/codeLists/";
-	const baseUriMatch = ttlData.match(/@prefix\s*:\s*<([^>]+)>/m);
-	if (baseUriMatch) {
-		baseUri = baseUriMatch[1];
+function setCachedData(url: string, data: CodeList[]): void {
+	if (!data || data.length === 0) {
+		return;
 	}
 
-	console.log("=== PARSING TURTLE ===");
-	console.log("Base URI:", baseUri);
+	// Store in memory cache
+	inMemoryCache[url] = data;
 
-	// Split into individual entries by looking for lines starting with :id
-	const lines = ttlData.split('\n');
-	let currentEntry: CodeList | null = null;
-	let currentBlock = '';
-	
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i].trim();
-		
-		// Skip empty lines, comments, and prefix declarations
-		if (!line || line.startsWith('#') || line.startsWith('@prefix') || line.startsWith('@base')) {
-			continue;
-		}
-		
-		// Match entry start: :id (handles with or without trailing space)
-		const entryMatch = line.match(/^:([a-zA-Z0-9_-]+)(?:\s|$)/);
-		
-		if (entryMatch) {
-			// Save previous entry if it exists and has a name
-			if (currentEntry && currentEntry.hasName) {
-				// Check if this looks like a metadata/header entry
-				const looksLikeMetadata = 
-					currentEntry.hasIdentifier === 'IRISImpactCategories' ||
-					currentEntry.hasIdentifier === 'CanadianCorporateRegistries' ||
-					currentEntry.hasIdentifier === 'EquityDeservingGroupsESDC' ||
-					currentEntry.hasName.includes('Codelist') ||
-					currentEntry.hasName.includes('Code List');
-				
-				if (!looksLikeMetadata) {
-					codeList.push(currentEntry);
-				} else {
-					console.log(`Skipping metadata entry: ${currentEntry.hasIdentifier} - ${currentEntry.hasName}`);
-				}
-			}
-			
-			const id = entryMatch[1];
-			
-			// Always skip 'dataset' entries
-			if (id === 'dataset') {
-				console.log(`Skipping dataset entry`);
-				currentEntry = null;
-				currentBlock = '';
-				continue;
-			}
-			
-			// Start new entry - we'll check if it's metadata later after parsing properties
-			currentEntry = {
-				"@id": baseUri + id,
-				hasIdentifier: id, // Use ID as fallback identifier
-				hasName: "",
-			};
-			currentBlock = line;
-		} else if (currentEntry) {
-			// Continue building current entry's block
-			currentBlock += ' ' + line;
-		}
-		
-		// Extract properties from the accumulated block
-		if (currentEntry && currentBlock) {
-			// Extract hasIdentifier (override fallback if found)
-			const identifierMatch = currentBlock.match(/cids:hasIdentifier\s+"([^"]+)"/);
-			if (identifierMatch) {
-				currentEntry.hasIdentifier = identifierMatch[1];
-			}
-			
-			// Extract hasName - try multiple predicates
-			const nameMatch = currentBlock.match(/(?:cids:hasName|rdfs:label)\s+"([^"]+)"(?:@[a-z-]+)?/);
-			if (nameMatch) {
-				currentEntry.hasName = nameMatch[1];
-			}
-			
-			// ✅ CRITICAL FIX: Extract description from MULTIPLE predicates
-			// Map hasDefinition, hasCharacteristic, skos:definition to hasDescription
-			if (!currentEntry.hasDescription) {
-				const descMatch = currentBlock.match(/(?:cids:hasDescription|cids:hasDefinition|cids:hasCharacteristic|skos:definition)\s+"([^"]+)"(?:@[a-z-]+)?/);
-				if (descMatch) {
-					currentEntry.hasDescription = descMatch[1];
-				}
-			}
-		}
-	}
-	
-	// Don't forget to add the last entry
-	if (currentEntry && currentEntry.hasName) {
-		// Check if this looks like a metadata/header entry
-		// Metadata entries typically have:
-		// 1. hasIdentifier that matches the codelist name (e.g., "IRISImpactCategories")
-		// 2. hasName that contains words like "Codelist", "Categories", "Registries"
-		const looksLikeMetadata = 
-			currentEntry.hasIdentifier === 'IRISImpactCategories' ||
-			currentEntry.hasIdentifier === 'CanadianCorporateRegistries' ||
-			currentEntry.hasIdentifier === 'EquityDeservingGroupsESDC' ||
-			currentEntry.hasName.includes('Codelist') ||
-			currentEntry.hasName.includes('Code List');
-		
-		if (!looksLikeMetadata) {
-			codeList.push(currentEntry);
-		} else {
-			console.log(`Skipping metadata entry: ${currentEntry.hasIdentifier} - ${currentEntry.hasName}`);
-		}
-	}
-	
-	console.log(`Total entries parsed: ${codeList.length}`);
-	console.log("======================");
-	
-	return codeList;
-}
-
-async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
-	try {
-		// Check if the data is already in the in-memory cache
-		if (inMemoryCache[url] && inMemoryCache[url].length > 0) {
-			console.log(`Using in-memory cache for ${url}`);
-			return inMemoryCache[url];
-		}
-
-		// Check if the data is in localStorage
-		const cachedData = localStorage.getItem(url);
-		if (cachedData) {
-			try {
-				const parsedData = JSON.parse(cachedData);
-
-				// Check if it's the cache format with expiration
-				if (parsedData.data && parsedData.timestamp && parsedData.expiresIn) {
-					const now = Date.now();
-					const isExpired = now - parsedData.timestamp > parsedData.expiresIn;
-
-					if (!isExpired) {
-						// Cache is still valid
-						console.log(`Using localStorage cache for ${url}`);
-						inMemoryCache[url] = parsedData.data;
-						return parsedData.data;
-					} else {
-						// Cache expired, remove it
-						console.log(`Cache expired for ${url}, removing`);
-						localStorage.removeItem(url);
-					}
-				} else if (Array.isArray(parsedData)) {
-					// Old cache format - invalidate it
-					localStorage.removeItem(url);
-				}
-			} catch (error) {
-				// Invalid JSON or corrupted cache, remove it
-				localStorage.removeItem(url);
-			}
-		}
-
-		let data: string;
-		let codeList: CodeList[] = [];
-
-		// Try to fetch from primary URL first
-		try {
-			console.log(`Attempting to fetch from primary URL: ${url}`);
-			const response = await fetch(url);
-
-			if (!response.ok) {
-				throw new Error(`Primary fetch failed with status: ${response.status}`);
-			}
-
-			data = await response.text();
-			
-			// Parse based on file type
-			if (url.endsWith('.ttl')) {
-				codeList = parseTurtleToCodeList(data);
-			} else {
-				codeList = parseXmlToCodeList(data);
-			}
-
-			console.log(`✅ Successfully fetched ${codeList.length} items from primary URL`);
-		} catch (primaryError) {
-			console.warn(`Primary fetch failed for ${url}:`, primaryError);
-
-			// Try GitHub fallback if available
-			const fallbackUrl = GITHUB_FALLBACK_URLS[url];
-			if (fallbackUrl) {
-				try {
-					console.log(`Attempting fallback from GitHub: ${fallbackUrl}`);
-					const fallbackResponse = await fetch(fallbackUrl);
-
-					if (!fallbackResponse.ok) {
-						throw new Error(`Fallback fetch failed with status: ${fallbackResponse.status}`);
-					}
-
-					data = await fallbackResponse.text();
-					
-					// Parse based on file type
-					if (url.endsWith('.ttl')) {
-						codeList = parseTurtleToCodeList(data);
-					} else {
-						codeList = parseXmlToCodeList(data);
-					}
-
-					console.log(`✅ Successfully fetched ${codeList.length} items from GitHub fallback`);
-				} catch (fallbackError) {
-					console.error(`Both primary and fallback fetch failed for ${url}`);
-					throw new Error(
-						`All fetch attempts failed. Primary: ${primaryError}, Fallback: ${fallbackError}`
-					);
-				}
-			} else {
-				// No fallback available, re-throw primary error
-				throw primaryError;
-			}
-		}
-
-		// Cache the successful result
-		if (codeList.length > 0) {
-			// Store in memory cache
-			inMemoryCache[url] = codeList;
-
-			// Store in localStorage with expiration
-			const cacheItem: CacheItem = {
-				data: codeList,
-				timestamp: Date.now(),
-				expiresIn: CACHE_EXPIRATION_TIME,
-			};
-			try {
-				localStorage.setItem(url, JSON.stringify(cacheItem));
-				console.log(`Cached ${codeList.length} items for ${url}`);
-			} catch (storageError) {
-				console.warn("Failed to cache in localStorage:", storageError);
-			}
-		}
-
-		return codeList;
-	} catch (error) {
-		console.error(`Error in fetchAndParseCodeList for ${url}:`, error);
-		throw error;
-	}
-}
-
-export async function getCodeListByTableName(tableName: string): Promise<CodeList[]> {
-	const codelistUrls: { [key: string]: string } = {
-		Sector: "https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl",
-		PopulationServed: "https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl",
-		Locality: "https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl",
-		ProvinceTerritory: "https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl",
-		OrganizationType: "https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl",
-		CorporateRegistrar: "https://codelist.commonapproach.org/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl",
-		IRISImpactCategory: "https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl",
-		EquityDeservingGroup: "https://codelist.commonapproach.org/EquityDeservingGroupsESDC/EquityDeservingGroupsESDC.ttl",
+	// Store in localStorage with expiration
+	const cacheItem: CacheItem = {
+		data,
+		timestamp: Date.now(),
+		expiresIn: CACHE_EXPIRATION_TIME,
 	};
 
-	const url = codelistUrls[tableName];
-	if (!url) {
-		throw new Error(`No codelist URL found for table: ${tableName}`);
-	}
-
-	return fetchAndParseCodeList(url);
-}
-
-// Individual export functions for each codelist type
-export async function getAllSectors(): Promise<CodeList[]> {
 	try {
-		const icnpoSectors = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl"
-		);
-		const statsCanSectors = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/StatsCanSector/StatsCanSector.owl"
-		);
-		const irisSectors = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl"
-		);
-
-		return [...icnpoSectors, ...statsCanSectors, ...irisSectors];
+		localStorage.setItem(url, JSON.stringify(cacheItem));
+		console.log(`💾 Cached ${data.length} entries for ${url}`);
 	} catch (error) {
-		console.error("Error fetching sectors code list:", error);
-		return [];
+		console.warn(`⚠️ Failed to cache in localStorage (${url}):`, error);
+		// Continue execution - caching failure shouldn't break functionality
 	}
 }
 
-export async function getAllPopulationServed(): Promise<CodeList[]> {
-	try {
-		const populationServed = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl"
-		);
-		return populationServed;
-	} catch (error) {
-		console.error("Error fetching PopulationServed code list:", error);
-		return [];
-	}
-}
-
-export async function getAllProvinceTerritory(): Promise<CodeList[]> {
-	try {
-		const provinceTerritory = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl"
-		);
-		return provinceTerritory;
-	} catch (error) {
-		console.error("Error fetching ProvinceTerritory code list:", error);
-		return [];
-	}
-}
-
-export async function getAllOrganizationType(): Promise<CodeList[]> {
-	try {
-		const organizationType = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl"
-		);
-		return organizationType;
-	} catch (error) {
-		console.error("Error fetching OrganizationType code list:", error);
-		return [];
-	}
-}
-
-export async function getAllLocalities(): Promise<CodeList[]> {
-	try {
-		const localities = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl"
-		);
-		return localities;
-	} catch (error) {
-		console.error("Error fetching Locality code list:", error);
-		return [];
-	}
-}
-
-export async function getAllCorporateRegistrars(): Promise<CodeList[]> {
-	try {
-		const corporateRegistrars = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl"
-		);
-		return corporateRegistrars;
-	} catch (error) {
-		console.error("Error fetching CorporateRegistrar code list:", error);
-		return [];
-	}
-}
-
-export async function getAllIRISImpactCategories(): Promise<CodeList[]> {
-	try {
-		const irisCategories = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl"
-		);
-		return irisCategories;
-	} catch (error) {
-		console.error("Error fetching IRIS+ Impact Categories code list:", error);
-		return [];
-	}
-}
-
-export async function getAllEquityDeservingGroups(): Promise<CodeList[]> {
-	try {
-		const edgGroups = await fetchAndParseCodeList(
-			"https://codelist.commonapproach.org/EquityDeservingGroupsESDC/EquityDeservingGroupsESDC.ttl"
-		);
-		return edgGroups;
-	} catch (error) {
-		console.error("Error fetching Equity Deserving Groups code list:", error);
-		return [];
-	}
-}
-
+/**
+ * Clears cache for a specific table or all tables
+ */
 export function clearCodeListCache(tableName?: string): void {
 	if (tableName) {
-		const codelistUrls: { [key: string]: string } = {
-			Sector: "https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl",
-			PopulationServed: "https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl",
-			Locality: "https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl",
-			ProvinceTerritory: "https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl",
-			OrganizationType: "https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl",
-			CorporateRegistrar: "https://codelist.commonapproach.org/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl",
-			IRISImpactCategory: "https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl",
-			EquityDeservingGroup: "https://codelist.commonapproach.org/EquityDeservingGroupsESDC/EquityDeservingGroupsESDC.ttl",
+		// Map table name to URL
+		const urlMap: Record<string, string> = {
+			Sector: CODELIST_URLS.ICNPOSector, // Sector uses multiple URLs, clear the first one
+			PopulationServed: CODELIST_URLS.PopulationServed,
+			Locality: CODELIST_URLS.Locality,
+			ProvinceTerritory: CODELIST_URLS.ProvinceTerritory,
+			OrganizationType: CODELIST_URLS.OrganizationType,
+			CorporateRegistrar: CODELIST_URLS.CorporateRegistrar,
+			IRISImpactCategory: CODELIST_URLS.IRISImpactCategory,
+			EquityDeservingGroup: CODELIST_URLS.EquityDeservingGroup,
 		};
 
-		const url = codelistUrls[tableName];
+		const url = urlMap[tableName];
 		if (url) {
 			delete inMemoryCache[url];
 			localStorage.removeItem(url);
-			console.log(`Cleared cache for ${tableName}`);
+			console.log(`🗑️ Cleared cache for ${tableName}`);
 		}
 	} else {
 		// Clear all caches
@@ -488,6 +184,405 @@ export function clearCodeListCache(tableName?: string): void {
 				localStorage.removeItem(key);
 			}
 		});
-		console.log("Cleared all codelist caches");
+		console.log("🗑️ Cleared all codelist caches");
 	}
+}
+
+// ============================================================================
+// XML PARSER (for .owl files)
+// ============================================================================
+
+/**
+ * Parses OWL/RDF XML format to CodeList array
+ * Used for: ICNPO, StatsCan, PopulationServed, ProvinceTerritory, OrganizationType, Locality
+ */
+function parseXmlToCodeList(xmlData: string): CodeList[] {
+	const parser = new XMLParser({ ignoreAttributes: false });
+	const jsonData = parser.parse(xmlData);
+
+	const codeList: CodeList[] = [];
+	const descriptions = jsonData["rdf:RDF"]?.["rdf:Description"] || [];
+	let baseIdUrl = "";
+
+	// Ensure descriptions is an array
+	const descArray = Array.isArray(descriptions) ? descriptions : [descriptions];
+
+	for (const desc of descArray) {
+		// Extract base URL from first entry
+		if (desc["vann:preferredNamespacePrefix"]) {
+			baseIdUrl = desc["@_rdf:about"]?.replace("#dataset", "") || "";
+			continue;
+		}
+
+		// Skip entries without required fields
+		if (!desc["cids:hasIdentifier"] && !desc["cids:hasName"]) {
+			continue;
+		}
+
+		// Build CodeList entry
+		const entry: CodeList = {
+			"@id": desc["@_rdf:about"]?.includes(baseIdUrl)
+				? desc["@_rdf:about"]
+				: baseIdUrl + desc["@_rdf:about"],
+			hasIdentifier: desc["cids:hasIdentifier"]?.toString() || "",
+			hasName: desc["cids:hasName"]?.["#text"]?.toString() || "",
+		};
+
+		// Extract description from multiple possible predicates
+		if (desc["cids:hasDescription"]?.["#text"]) {
+			entry.hasDescription = desc["cids:hasDescription"]["#text"].toString();
+		} else if (desc["cids:hasDefinition"]?.["#text"]) {
+			entry.hasDescription = desc["cids:hasDefinition"]["#text"].toString();
+		} else if (desc["cids:hasCharacteristic"]?.["#text"]) {
+			entry.hasDescription = desc["cids:hasCharacteristic"]["#text"].toString();
+		}
+
+		codeList.push(entry);
+	}
+
+	return codeList;
+}
+
+// ============================================================================
+// TURTLE PARSER (for .ttl files)
+// ============================================================================
+
+/**
+ * Checks if an entry is metadata/header that should be skipped
+ */
+function isMetadataEntry(identifier: string, name: string): boolean {
+	// Check if identifier is in known metadata list
+	if (METADATA_IDENTIFIERS.has(identifier)) {
+		return true;
+	}
+
+	// Check if name contains metadata keywords
+	return METADATA_KEYWORDS.some(keyword => name.includes(keyword));
+}
+
+/**
+ * Enhanced Turtle parser supporting multiple formats:
+ * 1. Full URLs: <https://iris.thegiin.org/theme/5.3/Agriculture/> (IRIS)
+ * 2. Prefix notation: :identifier (CorporateRegistrar, EDG)
+ * 
+ * Handles multiple description predicates:
+ * - cids:hasDescription
+ * - cids:hasDefinition
+ * - cids:hasCharacteristic (EDG)
+ * - skos:definition (IRIS)
+ */
+function parseTurtleToCodeList(ttlData: string, sourceUrl: string): CodeList[] {
+	const codeList: CodeList[] = [];
+	
+	// Extract base URI from @prefix declaration
+	let baseUri = "https://codelist.commonapproach.org/codeLists/";
+	const baseUriMatch = ttlData.match(/@prefix\s*:\s*<([^>]+)>/m);
+	if (baseUriMatch) {
+		baseUri = baseUriMatch[1];
+	}
+
+	console.log(`\n=== Parsing Turtle: ${sourceUrl} ===`);
+	console.log(`Base URI: ${baseUri}`);
+	console.log(`Data size: ${(ttlData.length / 1024).toFixed(2)} KB`);
+
+	// 🔥 CRITICAL FIX: Check if this is IRIS file (uses full iris.thegiin.org URLs)
+	const isIRISFile = ttlData.includes('iris.thegiin.org');
+	
+	if (isIRISFile) {
+		console.log(`🎯 Detected IRIS file - using full URL parsing`);
+	}
+
+	const lines = ttlData.split('\n');
+	let currentEntry: CodeList | null = null;
+	let currentBlock = '';
+	let entryCount = 0;
+	let skippedCount = 0;
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i].trim();
+
+		// Skip empty lines, comments, and prefix declarations
+		if (!line || line.startsWith('#') || line.startsWith('@prefix') || line.startsWith('@base')) {
+			continue;
+		}
+
+		// 🔥 CRITICAL: Try FULL URL format FIRST (for IRIS)
+		const fullUrlMatch = line.match(/<(https?:\/\/[^>]+)>\s*$/);
+		
+		// Try PREFIX notation format (EDG, Corporate)
+		const prefixMatch = !fullUrlMatch ? line.match(/^:([a-zA-Z0-9_-]+)(?:\s|$)/) : null;
+
+		if (fullUrlMatch || prefixMatch) {
+			// Save previous entry if it exists
+			if (currentEntry && currentEntry.hasName) {
+				if (!isMetadataEntry(currentEntry.hasIdentifier, currentEntry.hasName)) {
+					codeList.push(currentEntry);
+					entryCount++;
+					console.log(`  ✅ Entry ${entryCount}: ${currentEntry.hasIdentifier} - "${currentEntry.hasName}"`);
+				} else {
+					skippedCount++;
+					console.log(`  ⏭️  Skipped metadata: ${currentEntry.hasIdentifier}`);
+				}
+			}
+
+			// Start new entry
+			if (fullUrlMatch) {
+				// Full URL format (IRIS)
+				const fullUrl = fullUrlMatch[1];
+				const identifier = fullUrl.split('/').filter(Boolean).pop() || fullUrl;
+				
+				currentEntry = {
+					"@id": fullUrl,
+					hasIdentifier: identifier,
+					hasName: "",
+				};
+				console.log(`  🔍 Found full URL: ${identifier}`);
+			} else if (prefixMatch) {
+				// Prefix notation format
+				const identifier = prefixMatch[1];
+				currentEntry = {
+					"@id": baseUri + identifier,
+					hasIdentifier: identifier,
+					hasName: "",
+				};
+			}
+
+			currentBlock = line;
+		} else if (currentEntry) {
+			// Continue building current entry's block
+			currentBlock += ' ' + line;
+		}
+
+		// Extract properties from accumulated block
+		if (currentEntry && currentBlock) {
+			// Override hasIdentifier if explicitly defined
+			const identifierMatch = currentBlock.match(/cids:hasIdentifier\s+"([^"]+)"/);
+			if (identifierMatch) {
+				currentEntry.hasIdentifier = identifierMatch[1];
+			}
+
+			// Extract hasName from multiple possible predicates
+			if (!currentEntry.hasName) {
+				const nameMatch = currentBlock.match(/(?:cids:hasName|rdfs:label)\s+"([^"]+)"(?:@[a-z-]+)?/);
+				if (nameMatch) {
+					currentEntry.hasName = nameMatch[1];
+				}
+			}
+
+			// Extract description from multiple possible predicates
+			if (!currentEntry.hasDescription) {
+				const descMatch = currentBlock.match(/(?:cids:hasDescription|cids:hasDefinition|cids:hasCharacteristic|skos:definition)\s+"([^"]+)"(?:@[a-z-]+)?/);
+				if (descMatch) {
+					currentEntry.hasDescription = descMatch[1];
+				}
+			}
+		}
+	}
+
+	// Don't forget the last entry!
+	if (currentEntry && currentEntry.hasName) {
+		if (!isMetadataEntry(currentEntry.hasIdentifier, currentEntry.hasName)) {
+			codeList.push(currentEntry);
+			entryCount++;
+			console.log(`  ✅ Entry ${entryCount}: ${currentEntry.hasIdentifier} - "${currentEntry.hasName}"`);
+		} else {
+			skippedCount++;
+			console.log(`  ⏭️  Skipped metadata: ${currentEntry.hasIdentifier}`);
+		}
+	}
+
+	console.log(`📊 Parsed ${entryCount} entries (skipped ${skippedCount} metadata entries)`);
+	console.log(`=== End Parsing ===\n`);
+
+	return codeList;
+}
+
+// ============================================================================
+// FETCH AND PARSE
+// ============================================================================
+
+/**
+ * Fetches and parses a codelist from URL with automatic fallback
+ */
+async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
+	try {
+		// Check cache first
+		const cachedData = getCachedData(url);
+		if (cachedData) {
+			return cachedData;
+		}
+
+		console.log(`🌐 Fetching: ${url}`);
+		let data: string;
+		let codeList: CodeList[] = [];
+		let fetchError: Error | null = null;
+
+		// Try primary URL
+		try {
+			const response = await fetch(url);
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+			}
+			data = await response.text();
+			console.log(`✅ Primary fetch successful (${(data.length / 1024).toFixed(2)} KB)`);
+		} catch (primaryError) {
+			fetchError = primaryError as Error;
+			console.warn(`⚠️ Primary fetch failed: ${fetchError.message}`);
+
+			// Try GitHub fallback
+			const fallbackUrl = GITHUB_FALLBACK_URLS[url];
+			if (!fallbackUrl) {
+				throw new Error(`No fallback URL available for ${url}`);
+			}
+
+			console.log(`🔄 Trying GitHub fallback: ${fallbackUrl}`);
+			const fallbackResponse = await fetch(fallbackUrl);
+			if (!fallbackResponse.ok) {
+				throw new Error(`Fallback HTTP ${fallbackResponse.status}: ${fallbackResponse.statusText}`);
+			}
+			data = await fallbackResponse.text();
+			console.log(`✅ Fallback fetch successful (${(data.length / 1024).toFixed(2)} KB)`);
+		}
+
+		// Parse based on file extension
+		if (url.endsWith('.ttl')) {
+			codeList = parseTurtleToCodeList(data, url);
+		} else if (url.endsWith('.owl')) {
+			codeList = parseXmlToCodeList(data);
+		} else {
+			throw new Error(`Unsupported file format for ${url}`);
+		}
+
+		// Cache successful results
+		if (codeList.length > 0) {
+			setCachedData(url, codeList);
+		} else {
+			console.warn(`⚠️ Warning: Parsed 0 entries from ${url}`);
+		}
+
+		return codeList;
+	} catch (error) {
+		console.error(`❌ Failed to fetch and parse ${url}:`, error);
+		throw error;
+	}
+}
+
+// ============================================================================
+// PUBLIC API - Individual Codelist Fetchers
+// ============================================================================
+
+export async function getAllSectors(): Promise<CodeList[]> {
+	try {
+		console.log("\n🌍 === FETCHING ALL SECTORS === 🌍");
+		
+		const [icnpo, statsCan, iris] = await Promise.all([
+			fetchAndParseCodeList(CODELIST_URLS.ICNPOSector),
+			fetchAndParseCodeList(CODELIST_URLS.StatsCanSector),
+			fetchAndParseCodeList(CODELIST_URLS.IRISImpactCategory),
+		]);
+
+		const combined = [...icnpo, ...statsCan, ...iris];
+		console.log(`\n✨ Total Sectors: ${combined.length} (ICNPO: ${icnpo.length}, StatsCan: ${statsCan.length}, IRIS: ${iris.length})\n`);
+		
+		return combined;
+	} catch (error) {
+		console.error("❌ Error in getAllSectors():", error);
+		return [];
+	}
+}
+
+export async function getAllPopulationServed(): Promise<CodeList[]> {
+	try {
+		return await fetchAndParseCodeList(CODELIST_URLS.PopulationServed);
+	} catch (error) {
+		console.error("❌ Error fetching PopulationServed:", error);
+		return [];
+	}
+}
+
+export async function getAllProvinceTerritory(): Promise<CodeList[]> {
+	try {
+		return await fetchAndParseCodeList(CODELIST_URLS.ProvinceTerritory);
+	} catch (error) {
+		console.error("❌ Error fetching ProvinceTerritory:", error);
+		return [];
+	}
+}
+
+export async function getAllOrganizationType(): Promise<CodeList[]> {
+	try {
+		return await fetchAndParseCodeList(CODELIST_URLS.OrganizationType);
+	} catch (error) {
+		console.error("❌ Error fetching OrganizationType:", error);
+		return [];
+	}
+}
+
+export async function getAllLocalities(): Promise<CodeList[]> {
+	try {
+		return await fetchAndParseCodeList(CODELIST_URLS.Locality);
+	} catch (error) {
+		console.error("❌ Error fetching Locality:", error);
+		return [];
+	}
+}
+
+export async function getAllCorporateRegistrars(): Promise<CodeList[]> {
+	try {
+		return await fetchAndParseCodeList(CODELIST_URLS.CorporateRegistrar);
+	} catch (error) {
+		console.error("❌ Error fetching CorporateRegistrar:", error);
+		return [];
+	}
+}
+
+export async function getAllIRISImpactCategories(): Promise<CodeList[]> {
+	try {
+		return await fetchAndParseCodeList(CODELIST_URLS.IRISImpactCategory);
+	} catch (error) {
+		console.error("❌ Error fetching IRIS Impact Categories:", error);
+		return [];
+	}
+}
+
+export async function getAllEquityDeservingGroups(): Promise<CodeList[]> {
+	try {
+		return await fetchAndParseCodeList(CODELIST_URLS.EquityDeservingGroup);
+	} catch (error) {
+		console.error("❌ Error fetching Equity Deserving Groups:", error);
+		return [];
+	}
+}
+
+// ============================================================================
+// PUBLIC API - Generic Fetcher by Table Name
+// ============================================================================
+
+/**
+ * Fetches codelist data by table name
+ * Special handling: "Sector" combines ICNPO, StatsCan, and IRIS
+ */
+export async function getCodeListByTableName(tableName: string): Promise<CodeList[]> {
+	// Special case: Sector combines three codelists
+	if (tableName === "Sector") {
+		return getAllSectors();
+	}
+
+	// Map table names to URLs
+	const urlMap: Record<string, string> = {
+		PopulationServed: CODELIST_URLS.PopulationServed,
+		Locality: CODELIST_URLS.Locality,
+		ProvinceTerritory: CODELIST_URLS.ProvinceTerritory,
+		OrganizationType: CODELIST_URLS.OrganizationType,
+		CorporateRegistrar: CODELIST_URLS.CorporateRegistrar,
+		IRISImpactCategory: CODELIST_URLS.IRISImpactCategory,
+		EquityDeservingGroup: CODELIST_URLS.EquityDeservingGroup,
+	};
+
+	const url = urlMap[tableName];
+	if (!url) {
+		throw new Error(`No codelist URL found for table: ${tableName}`);
+	}
+
+	return fetchAndParseCodeList(url);
 }

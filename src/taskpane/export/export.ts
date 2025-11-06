@@ -179,20 +179,22 @@ export async function exportData(
             }
 
             if (hasChanges) {
-              changeOnDefaultCodeListsWarning.push(
-                intl.formatMessage(
-                  {
-                    id: "export.messages.warning.codeListChangesIgnored",
-                    defaultMessage:
-                      "Changes made in the predefined code list item with @id <b>{id}</b> in table <b>{tableName}</b> will be ignored.",
-                  },
-                  {
-                    id: recordId,
-                    tableName: table.name,
-                    b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
-                  }
-                ) as string
-              );
+              // Skip warning for EquityDeservingGroup - descriptions were added to codelist
+              if (table.name !== "EquityDeservingGroup") {
+                changeOnDefaultCodeListsWarning.push(
+                  intl.formatMessage(
+                    {
+                      id: "export.messages.warning.codeListChangesIgnored",
+                      defaultMessage: "Changes made in the predefined code list item with @id <b>{id}</b> in table <b>{tableName}</b> will be ignored.",
+                    },
+                    {
+                      id: recordId,
+                      tableName: table.name,
+                      b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
+                    }
+                  ) as string
+                );
+              }
             }
           }
           continue;
