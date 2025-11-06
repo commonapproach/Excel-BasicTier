@@ -336,6 +336,107 @@ export async function getCodeListByTableName(tableName: string): Promise<CodeLis
 	return fetchAndParseCodeList(url);
 }
 
+// Individual export functions for each codelist type
+export async function getAllSectors(): Promise<CodeList[]> {
+	try {
+		const icnpoSectors = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/ICNPOsector/ICNPOsector.owl"
+		);
+		const statsCanSectors = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/StatsCanSector/StatsCanSector.owl"
+		);
+
+		return [...icnpoSectors, ...statsCanSectors];
+	} catch (error) {
+		console.error("Error fetching sectors code list:", error);
+		return [];
+	}
+}
+
+export async function getAllPopulationServed(): Promise<CodeList[]> {
+	try {
+		const populationServed = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/PopulationServed/PopulationServed.owl"
+		);
+		return populationServed;
+	} catch (error) {
+		console.error("Error fetching PopulationServed code list:", error);
+		return [];
+	}
+}
+
+export async function getAllProvinceTerritory(): Promise<CodeList[]> {
+	try {
+		const provinceTerritory = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/ProvinceTerritory/ProvinceTerritory.owl"
+		);
+		return provinceTerritory;
+	} catch (error) {
+		console.error("Error fetching ProvinceTerritory code list:", error);
+		return [];
+	}
+}
+
+export async function getAllOrganizationType(): Promise<CodeList[]> {
+	try {
+		const organizationType = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/OrgTypeGOC/OrgTypeGOC.owl"
+		);
+		return organizationType;
+	} catch (error) {
+		console.error("Error fetching OrganizationType code list:", error);
+		return [];
+	}
+}
+
+export async function getAllLocalities(): Promise<CodeList[]> {
+	try {
+		const localities = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/Locality/LocalityStatsCan.owl"
+		);
+		return localities;
+	} catch (error) {
+		console.error("Error fetching Locality code list:", error);
+		return [];
+	}
+}
+
+export async function getAllCorporateRegistrars(): Promise<CodeList[]> {
+	try {
+		const corporateRegistrars = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/CanadianCorporateRegistries/CanadianCorporateRegistries.ttl"
+		);
+		return corporateRegistrars;
+	} catch (error) {
+		console.error("Error fetching CorporateRegistrar code list:", error);
+		return [];
+	}
+}
+
+export async function getAllIRISImpactCategories(): Promise<CodeList[]> {
+	try {
+		const irisCategories = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/IRISImpactThemes/IRISImpactCategories.ttl"
+		);
+		return irisCategories;
+	} catch (error) {
+		console.error("Error fetching IRIS+ Impact Categories code list:", error);
+		return [];
+	}
+}
+
+export async function getAllEquityDeservingGroups(): Promise<CodeList[]> {
+	try {
+		const edgGroups = await fetchAndParseCodeList(
+			"https://codelist.commonapproach.org/EquityDeservingGroupsESDC/EquityDeservingGroupsESDC.ttl"
+		);
+		return edgGroups;
+	} catch (error) {
+		console.error("Error fetching Equity Deserving Groups code list:", error);
+		return [];
+	}
+}
+
 export function clearCodeListCache(tableName?: string): void {
 	if (tableName) {
 		const codelistUrls: { [key: string]: string } = {
