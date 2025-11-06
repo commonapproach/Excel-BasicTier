@@ -84,7 +84,6 @@ function parseXmlToCodeList(data: string): CodeList[] {
 	return codeList;
 }
 
-// ✅ FIXED: Regex now matches :id with or without trailing space
 function parseTurtleToCodeList(ttlData: string): CodeList[] {
 	const codeList: CodeList[] = [];
 	
@@ -104,14 +103,15 @@ function parseTurtleToCodeList(ttlData: string): CodeList[] {
 	let currentBlock = '';
 	let fullUrlCount = 0;
 	let prefixCount = 0;
+	let skipCurrentEntry = false; // Flag to skip ConceptScheme entries
 	
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		
 		// Check if this line starts a new full-URL entry (IRIS format)
 		if (line.match(/^<https?:\/\//)) {
-			// Save previous entry if it exists
-			if (currentEntry && currentEntry.hasName) {
+			// Save previous entry if it exists and we're not skipping it
+			if (currentEntry && currentEntry.hasName && !skipCurrentEntry) {
 				codeList.push(currentEntry);
 				fullUrlCount++;
 				console.log(`Parsed full URL: ${currentEntry.hasName}`);
@@ -126,18 +126,15 @@ function parseTurtleToCodeList(ttlData: string): CodeList[] {
 					hasName: ""
 				};
 				currentBlock = line;
+				skipCurrentEntry = false; // Reset skip flag
 			}
 		}
 		// Check if this line starts a new prefix entry (:id format)
-		else if (line.match(/^:[a-zA-Z0-9_-]+\s/)) {
-			// Save previous entry if it exists
-			if (currentEntry && currentEntry.hasName) {
-				if (currentEntry["@id"].startsWith('http')) {
-					fullUrlCount++;
-				} else {
-					prefixCount++;
-				}
+		else if (line.match(/^:[a-zA-Z0-9_-]+(?:\s|$)/)) {
+			// Save previous entry if it exists and we're not skipping it
+			if (currentEntry && currentEntry.hasName && !skipCurrentEntry) {
 				codeList.push(currentEntry);
+				prefixCount++;
 				console.log(`Parsed prefix: ${currentEntry.hasName}`);
 			}
 			
@@ -150,13 +147,25 @@ function parseTurtleToCodeList(ttlData: string): CodeList[] {
 					hasName: ""
 				};
 				currentBlock = line;
+				skipCurrentEntry = false; // Reset skip flag
 			} else {
 				currentEntry = null;
+				currentBlock = '';
+				skipCurrentEntry = false;
 			}
 		}
-		else if (currentEntry) {
+		else if (currentEntry && !skipCurrentEntry) {
 			// Continue building current entry
 			currentBlock += '\n' + line;
+			
+			// CHECK: If we see ConceptScheme in the "a" declaration, mark this entry to be skipped
+			if (currentBlock.match(/\s+a\s+[^;]*skos:ConceptScheme/)) {
+				console.log(`Skipping ConceptScheme: ${currentEntry["@id"]}`);
+				skipCurrentEntry = true;
+				currentEntry = null;
+				currentBlock = '';
+				continue;
+			}
 			
 			// Check if we hit the end of this entry (line ending with ".")
 			if (line.trim() === '.' || line.trim().endsWith(' .')) {
@@ -178,24 +187,28 @@ function parseTurtleToCodeList(ttlData: string): CodeList[] {
 					currentEntry.hasIdentifier = parts.filter(p => p).pop() || "";
 				}
 				
-				// hasDescription or skos:definition
-				const descMatch = currentBlock.match(/(?:cids:hasDescription|skos:definition)\s+"([^"]+)"(?:@\w+)?/);
+				// hasDescription - handle cids:hasDescription, cids:hasDefinition, AND skos:definition
+				// Use a flexible regex that handles escaped quotes and special characters
+				const descMatch = currentBlock.match(/(?:cids:hasDescription|cids:hasDefinition|skos:definition)\s+"((?:[^"\\]|\\.)*)"/);
 				if (descMatch) {
-					currentEntry.hasDescription = descMatch[1];
+					// Unescape escaped characters
+					currentEntry.hasDescription = descMatch[1]
+						.replace(/\\"/g, '"')
+						.replace(/\\\\/g, '\\');
 				}
 			}
 		}
 	}
 	
-	// Don't forget the last entry
-	if (currentEntry && currentEntry.hasName) {
+	// ✅ CRITICAL: Don't forget the last entry! (only if not skipping)
+	if (currentEntry && currentEntry.hasName && !skipCurrentEntry) {
+		codeList.push(currentEntry);
 		if (currentEntry["@id"].startsWith('http')) {
 			fullUrlCount++;
 		} else {
 			prefixCount++;
 		}
-		codeList.push(currentEntry);
-		console.log(`Parsed: ${currentEntry.hasName}`);
+		console.log(`Parsed LAST entry: ${currentEntry.hasName}`);
 	}
 	
 	console.log(`Full URL entries: ${fullUrlCount}, Prefix entries: ${prefixCount}`);
