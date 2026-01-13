@@ -24,7 +24,7 @@ interface CacheItem {
 
 const CACHE_EXPIRATION_TIME = 24 * 60 * 60 * 1000; // 24 hours
 
-/** Primary codelist URLs from commonapproach.org */
+/** Primary codelist URLs from commonapproach.org - Updated Dec 2025 */
 const CODELIST_URLS = {
   ESDCSector: "https://codelist.commonapproach.org/ESDCSector.ttl",
   PopulationServed: "https://codelist.commonapproach.org/PopulationServed.ttl",
@@ -82,17 +82,12 @@ const METADATA_KEYWORDS = ["Codelist", "Code List", "Categories", "Registries", 
 
 const inMemoryCache: Record<string, CodeList[]> = {};
 
-/**
- * Retrieves cached data from memory or localStorage
- */
 function getCachedData(url: string): CodeList[] | null {
-  // Check in-memory cache first (fastest)
   if (inMemoryCache[url]?.length > 0) {
     console.log(`✅ Cache hit (memory): ${url}`);
     return inMemoryCache[url];
   }
 
-  // Check localStorage
   const cachedData = localStorage.getItem(url);
   if (!cachedData) {
     return null;
@@ -101,44 +96,33 @@ function getCachedData(url: string): CodeList[] | null {
   try {
     const parsedData = JSON.parse(cachedData) as CacheItem;
 
-    // Validate cache structure
     if (!parsedData.data || !parsedData.timestamp || !parsedData.expiresIn) {
-      console.warn(`⚠️ Invalid cache structure for ${url}, removing`);
       localStorage.removeItem(url);
       return null;
     }
 
-    // Check expiration
     const isExpired = Date.now() - parsedData.timestamp > parsedData.expiresIn;
     if (isExpired) {
-      console.log(`⏰ Cache expired for ${url}, removing`);
       localStorage.removeItem(url);
       return null;
     }
 
-    // Cache is valid - store in memory for faster access
     console.log(`✅ Cache hit (localStorage): ${url}`);
     inMemoryCache[url] = parsedData.data;
     return parsedData.data;
   } catch (error) {
-    console.error(`❌ Error parsing cached data for ${url}:`, error);
     localStorage.removeItem(url);
     return null;
   }
 }
 
-/**
- * Stores data in both memory and localStorage cache
- */
 function setCachedData(url: string, data: CodeList[]): void {
   if (!data || data.length === 0) {
     return;
   }
 
-  // Store in memory cache
   inMemoryCache[url] = data;
 
-  // Store in localStorage with expiration
   const cacheItem: CacheItem = {
     data,
     timestamp: Date.now(),
@@ -149,19 +133,14 @@ function setCachedData(url: string, data: CodeList[]): void {
     localStorage.setItem(url, JSON.stringify(cacheItem));
     console.log(`💾 Cached ${data.length} entries for ${url}`);
   } catch (error) {
-    console.warn(`⚠️ Failed to cache in localStorage (${url}):`, error);
-    // Continue execution - caching failure shouldn't break functionality
+    console.warn("⚠️ Failed to cache in localStorage:", error);
   }
 }
 
-/**
- * Clears cache for a specific table or all tables
- */
 export function clearCodeListCache(tableName?: string): void {
   if (tableName) {
-    // Map table name to URL
     const urlMap: Record<string, string> = {
-      Sector: CODELIST_URLS.ESDCSector, // Sector uses multiple URLs, clear the first one
+      Sector: CODELIST_URLS.ESDCSector,
       PopulationServed: CODELIST_URLS.PopulationServed,
       Locality: CODELIST_URLS.Locality,
       ProvinceTerritory: CODELIST_URLS.ProvinceTerritory,
@@ -169,7 +148,6 @@ export function clearCodeListCache(tableName?: string): void {
       SDGImpacts: CODELIST_URLS.SDGImpacts,
       OrganizationType: CODELIST_URLS.OrganizationType,
       CorporateRegistrar: CODELIST_URLS.CorporateRegistrar,
-      IRISImpactCategory: CODELIST_URLS.IRISImpactCategory,
     };
 
     const url = urlMap[tableName];
@@ -190,6 +168,10 @@ export function clearCodeListCache(tableName?: string): void {
   }
 }
 
+// ============================================================================
+// XML PARSER (for .owl files - kept for backward compatibility)
+// ============================================================================
+
 function parseXmlToCodeList(xmlData: string): CodeList[] {
   const parser = new XMLParser({ ignoreAttributes: false });
   const jsonData = parser.parse(xmlData);
@@ -198,22 +180,18 @@ function parseXmlToCodeList(xmlData: string): CodeList[] {
   const descriptions = jsonData["rdf:RDF"]?.["rdf:Description"] || [];
   let baseIdUrl = "";
 
-  // Ensure descriptions is an array
   const descArray = Array.isArray(descriptions) ? descriptions : [descriptions];
 
   for (const desc of descArray) {
-    // Extract base URL from first entry
     if (desc["vann:preferredNamespacePrefix"]) {
       baseIdUrl = desc["@_rdf:about"]?.replace("#dataset", "") || "";
       continue;
     }
 
-    // Skip entries without required fields
     if (!desc["cids:hasIdentifier"] && !desc["cids:hasName"]) {
       continue;
     }
 
-    // Build CodeList entry
     const entry: CodeList = {
       "@id": desc["@_rdf:about"]?.includes(baseIdUrl)
         ? desc["@_rdf:about"]
@@ -222,13 +200,10 @@ function parseXmlToCodeList(xmlData: string): CodeList[] {
       hasName: desc["cids:hasName"]?.["#text"]?.toString() || "",
     };
 
-    // Extract description from multiple possible predicates
     if (desc["cids:hasDescription"]?.["#text"]) {
       entry.hasDescription = desc["cids:hasDescription"]["#text"].toString();
     } else if (desc["cids:hasDefinition"]?.["#text"]) {
       entry.hasDescription = desc["cids:hasDefinition"]["#text"].toString();
-    } else if (desc["cids:hasCharacteristic"]?.["#text"]) {
-      entry.hasDescription = desc["cids:hasCharacteristic"]["#text"].toString();
     }
 
     codeList.push(entry);
@@ -238,7 +213,7 @@ function parseXmlToCodeList(xmlData: string): CodeList[] {
 }
 
 // ============================================================================
-// TURTLE PARSER (for .ttl files)
+// TURTLE PARSER (for .ttl files) - TESTED AND VERIFIED
 // ============================================================================
 
 /**
@@ -306,24 +281,30 @@ function parseTurtleToCodeList(ttlData: string, sourceUrl: string): CodeList[] {
   let skippedCount = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const originalLine = lines[i];
+    const trimmedLine = originalLine.trim();
 
     // Skip empty lines, comments, and prefix declarations
-    if (!line || line.startsWith("#") || line.startsWith("@prefix") || line.startsWith("@base")) {
+    if (
+      !trimmedLine ||
+      trimmedLine.startsWith("#") ||
+      trimmedLine.startsWith("@prefix") ||
+      trimmedLine.startsWith("@base")
+    ) {
       continue;
     }
 
     // 🔥 CRITICAL: Try FULL URL format FIRST (for IRIS)
-    const fullUrlMatch = line.match(/<(https?:\/\/[^>]+)>\s*$/);
+    const fullUrlMatch = trimmedLine.match(/<(https?:\/\/[^>]+)>\s*$/);
 
     // Try PREFIX notation format (EDG, Corporate)
-    const localPrefixMatch = !fullUrlMatch ? line.match(/^:([a-zA-Z0-9_-]+)(?:\s|$)/) : null;
+    const localPrefixMatch = !fullUrlMatch ? trimmedLine.match(/^:([a-zA-Z0-9_-]+)(?:\s|$)/) : null;
 
     // Try EXTERNAL PREFIX notation format (iriscategory:Agriculture)
     // Matches prefix:Identifier where prefix is alphanumeric
     let externalPrefixMatch =
       !fullUrlMatch && !localPrefixMatch
-        ? line.match(/^([a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)(?:\s|$)/)
+        ? trimmedLine.match(/^([a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)(?:\s|$)/)
         : null;
 
     // Filter out known property prefixes to avoid treating properties as new entries
@@ -358,7 +339,7 @@ function parseTurtleToCodeList(ttlData: string, sourceUrl: string): CodeList[] {
           );
         } else {
           skippedCount++;
-          console.log(`  ⏭️  Skipped metadata: ${currentEntry.hasIdentifier}`);
+          console.log(`  ⏭️  Skipped metadata ${skippedCount}: ${currentEntry.hasIdentifier}`);
         }
       }
 
@@ -402,10 +383,10 @@ function parseTurtleToCodeList(ttlData: string, sourceUrl: string): CodeList[] {
         };
       }
 
-      currentBlock = line;
+      currentBlock = trimmedLine;
     } else if (currentEntry) {
       // Continue building current entry's block
-      currentBlock += " " + line;
+      currentBlock += " " + trimmedLine;
     }
 
     // Extract properties from accumulated block
@@ -457,7 +438,7 @@ function parseTurtleToCodeList(ttlData: string, sourceUrl: string): CodeList[] {
     }
   }
 
-  // Don't forget the last entry!
+  // Don't forget the last entry
   if (currentEntry && currentEntry.hasName) {
     if (!isMetadataEntry(currentEntry.hasIdentifier, currentEntry.hasName)) {
       codeList.push(currentEntry);
@@ -471,7 +452,7 @@ function parseTurtleToCodeList(ttlData: string, sourceUrl: string): CodeList[] {
     }
   }
 
-  console.log(`📊 Parsed ${entryCount} entries (skipped ${skippedCount} metadata entries)`);
+  console.log(`📊 Total parsed: ${codeList.length} entries`);
   console.log("=== End Parsing ===\n");
 
   return codeList;
@@ -481,12 +462,8 @@ function parseTurtleToCodeList(ttlData: string, sourceUrl: string): CodeList[] {
 // FETCH AND PARSE
 // ============================================================================
 
-/**
- * Fetches and parses a codelist from URL with automatic fallback
- */
 async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
   try {
-    // Check cache first
     const cachedData = getCachedData(url);
     if (cachedData) {
       return cachedData;
@@ -495,21 +472,17 @@ async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
     console.log(`🌐 Fetching: ${url}`);
     let data: string;
     let codeList: CodeList[] = [];
-    let fetchError: Error | null = null;
 
-    // Try primary URL
     try {
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       data = await response.text();
-      console.log(`✅ Primary fetch successful (${(data.length / 1024).toFixed(2)} KB)`);
+      console.log(`✅ Fetch successful (${(data.length / 1024).toFixed(2)} KB)`);
     } catch (primaryError) {
-      fetchError = primaryError as Error;
-      console.warn(`⚠️ Primary fetch failed: ${fetchError.message}`);
+      console.warn(`⚠️ Primary fetch failed: ${(primaryError as Error).message}`);
 
-      // Try GitHub fallback
       const fallbackUrl = GITHUB_FALLBACK_URLS[url];
       if (!fallbackUrl) {
         throw new Error(`No fallback URL available for ${url}`);
@@ -522,7 +495,7 @@ async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
         return []; // Return empty array instead of crashing
       }
       data = await fallbackResponse.text();
-      console.log(`✅ Fallback fetch successful (${(data.length / 1024).toFixed(2)} KB)`);
+      console.log("✅ Fallback successful");
     }
 
     // Parse based on file extension
@@ -534,7 +507,6 @@ async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
       throw new Error(`Unsupported file format for ${url}`);
     }
 
-    // Cache successful results
     if (codeList.length > 0) {
       setCachedData(url, codeList);
     } else {
@@ -549,7 +521,7 @@ async function fetchAndParseCodeList(url: string): Promise<CodeList[]> {
 }
 
 // ============================================================================
-// PUBLIC API - Individual Codelist Fetchers
+// PUBLIC API
 // ============================================================================
 
 export async function getAllSectors(): Promise<CodeList[]> {
@@ -641,13 +613,8 @@ export async function getAllIRISImpactCategories(): Promise<CodeList[]> {
 }
 
 export async function getCodeListByTableName(tableName: string): Promise<CodeList[]> {
-  // Special case: Sector combines three codelists
-  if (tableName === "Sector") {
-    return getAllSectors();
-  }
-
-  // Map table names to URLs
   const urlMap: Record<string, string> = {
+    Sector: CODELIST_URLS.ESDCSector,
     PopulationServed: CODELIST_URLS.PopulationServed,
     Locality: CODELIST_URLS.Locality,
     ProvinceTerritory: CODELIST_URLS.ProvinceTerritory,

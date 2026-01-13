@@ -36,10 +36,11 @@ const KNOWN_EXTERNAL_TYPES = new Set<string>([
   "i72:Population",
 ]);
 
-// Helper: extract the primary ontology type we care about (cids: or sff:) from @type which may be string or array
+// Helper: extract the primary ontology type we care about (cids:, sff:, or org:) from @type which may be string or array
 function getPrimaryStandardType(typeVal: any): string | null {
   if (!typeVal) return null;
-  const isTarget = (t: string) => t.startsWith("cids:") || t.startsWith("sff:");
+  const isTarget = (t: string) =>
+    t.startsWith("cids:") || t.startsWith("sff:") || t.startsWith("org:");
   if (typeof typeVal === "string") return isTarget(typeVal) ? typeVal : null;
   if (Array.isArray(typeVal)) {
     const found = typeVal.find((t) => typeof t === "string" && isTarget(t));
@@ -660,8 +661,9 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
   const typeVal = data["@type"];
   let mainType: string | null = null;
 
-  // Recognize both cids: and sff: namespaces
-  const isStandard = (t: string) => t.startsWith("cids:") || t.startsWith("sff:");
+  // Recognize cids:, sff:, and org: namespaces (org: is used for OrganizationID and related types)
+  const isStandard = (t: string) =>
+    t.startsWith("cids:") || t.startsWith("sff:") || t.startsWith("org:");
   if (typeof typeVal === "string") {
     mainType = isStandard(typeVal) ? typeVal : null;
   } else if (Array.isArray(typeVal) && typeVal.length > 0) {

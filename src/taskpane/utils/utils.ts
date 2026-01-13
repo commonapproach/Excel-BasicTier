@@ -678,3 +678,66 @@ export function formatMessageToString(
   }
   return message as string;
 }
+
+/**
+ * Converts 'identifier' field to 'org:hasIdentifier' in OrganizationID objects for backward compatibility.
+ * Also normalizes the @type from 'org:OrganizationID' to 'sff:OrganizationID'.
+ * @param obj - The object or array to process
+ * @returns The object with updated property names
+ */
+export function convertOrganizationIDFields(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(convertOrganizationIDFields);
+  } else if (obj && typeof obj === "object") {
+    // Check if this is an OrganizationID object
+    const typeVal = obj["@type"];
+    const isOrganizationID =
+      typeVal &&
+      ((typeof typeVal === "string" &&
+        (typeVal === "org:OrganizationID" ||
+          typeVal === "sff:OrganizationID" ||
+          typeVal === "OrganizationID")) ||
+        (Array.isArray(typeVal) &&
+          typeVal.some(
+            (t: string) =>
+              t === "org:OrganizationID" || t === "sff:OrganizationID" || t === "OrganizationID"
+          )));
+
+    if (isOrganizationID) {
+      // Normalize @type to sff:OrganizationID
+      if (typeof typeVal === "string" && typeVal !== "sff:OrganizationID") {
+        obj["@type"] = "sff:OrganizationID";
+      } else if (Array.isArray(typeVal)) {
+        obj["@type"] = typeVal.map((t: string) =>
+          t === "org:OrganizationID" || t === "OrganizationID" ? "sff:OrganizationID" : t
+        );
+      }
+
+      // Convert 'identifier' to 'org:hasIdentifier' if present
+      if (
+        Object.prototype.hasOwnProperty.call(obj, "identifier") &&
+        !Object.prototype.hasOwnProperty.call(obj, "org:hasIdentifier") &&
+        !Object.prototype.hasOwnProperty.call(obj, "hasIdentifier")
+      ) {
+        obj["org:hasIdentifier"] = obj["identifier"];
+        delete obj["identifier"];
+      }
+
+      // Convert 'issuedBy' to 'org:issuedBy' if present
+      if (
+        Object.prototype.hasOwnProperty.call(obj, "issuedBy") &&
+        !Object.prototype.hasOwnProperty.call(obj, "org:issuedBy")
+      ) {
+        obj["org:issuedBy"] = obj["issuedBy"];
+        delete obj["issuedBy"];
+      }
+    }
+
+    // Recursively process all properties
+    for (const key of Object.keys(obj)) {
+      obj[key] = convertOrganizationIDFields(obj[key]);
+    }
+    return obj;
+  }
+  return obj;
+}

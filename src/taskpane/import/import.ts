@@ -18,6 +18,7 @@ import {
   convertIcAddressToPostalAddress,
   convertIcHasAddressToHasAddress,
   convertNumericalValueToHasNumericalValue,
+  convertOrganizationIDFields,
   convertUnknownUnitToDescription,
   harmonizeCardinalityProperty,
   parseJsonLd,
@@ -68,28 +69,32 @@ export async function importData(
     // eslint-disable-next-line no-param-reassign
     jsonData = convertNumericalValueToHasNumericalValue(jsonData);
 
-    // 2. unknown unit_of_measure -> unitDescription (async)
+    // 2. Convert OrganizationID fields and normalize @type for backward compatibility
+    // eslint-disable-next-line no-param-reassign
+    jsonData = convertOrganizationIDFields(jsonData);
+
+    // 3. unknown unit_of_measure -> unitDescription (async)
     const unitConversion = await convertUnknownUnitToDescription(jsonData);
     // eslint-disable-next-line no-param-reassign
     jsonData = unitConversion.data;
     const convertedUnknownUnits = unitConversion.converted;
 
-    // 3. ic:hasAddress -> hasAddress
+    // 4. ic:hasAddress -> hasAddress
     const beforeAddressProp = JSON.stringify(jsonData);
     // eslint-disable-next-line no-param-reassign
     jsonData = convertIcHasAddressToHasAddress(jsonData);
     const propertyNamesConverted = JSON.stringify(jsonData) !== beforeAddressProp;
 
-    // 4. Convert forFunderId to forOrganization for backward compatibility
+    // 5. Convert forFunderId to forOrganization for backward compatibility
     const originalDataFunding = JSON.stringify(jsonData);
     jsonData = convertForFunderIdToForOrganization(jsonData);
     const convertedFundingPropertyNames = JSON.stringify(jsonData) !== originalDataFunding;
 
-    // 4. harmonize describesPopulation / i72:cardinality_of
+    // 6. harmonize describesPopulation / i72:cardinality_of
     // eslint-disable-next-line no-param-reassign
     jsonData = harmonizeCardinalityProperty(jsonData);
 
-    // 5. Convert legacy Address objects to PostalAddress/Address shape
+    // 7. Convert legacy Address objects to PostalAddress/Address shape
     let convertedAddress = false;
     function convertAndTrack(obj: any): any {
       if (
