@@ -48,6 +48,7 @@
   "import.messages.warning.addressConverted": "Certaines adresses ont été converties de l'ancien format vers le nouveau format.",
   "import.messages.warning.propertyNamesConverted": "Certains noms de propriétés ont été convertis de l'ancien format (ic:hasAddress vers hasAddress).",
   "import.messages.warning.unknownUnitsConverted": "Certaines valeurs unit_of_measure inconnues ont été copiées dans le champ unitDescription. Veuillez vérifier et sélectionner la bonne unité dans la liste déroulante.",
+  "import.messages.warning.codeListModified": "L'enregistrement avec @id <b>{id}</b> dans la table <b>{tableName}</b> diffère de l'élément de liste de codes prédéfini. La version importée sera utilisée, ce qui peut causer des incohérences.",
   "import.messages.warning.unrecognizedField": "Le champ <b>{fieldName}</b> de la table <b>{tableName}</b> est incompatible avec le Niveau Basique de la Norme commune des données d'impact. Ce champ ne sera pas importé. ",
   "import.messages.success": "Vos données ont été importées avec succès.",
   "export.button.export": "Exporter",

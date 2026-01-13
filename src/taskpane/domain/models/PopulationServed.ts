@@ -17,6 +17,16 @@ export class PopulationServed extends Base {
         semiRequired: true,
       },
       {
+        name: "@type",
+        type: "string",
+        representedType: "array",
+        defaultValue: [],
+        unique: false,
+        notNull: false,
+        required: false,
+        semiRequired: false,
+      },
+      {
         name: "hasIdentifier",
         type: "string",
         representedType: "string",

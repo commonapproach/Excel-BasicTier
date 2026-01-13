@@ -48,6 +48,7 @@
   "import.messages.warning.addressConverted": "Some addresses were converted from the old format to the new format.",
   "import.messages.warning.propertyNamesConverted": "Some property names were converted from old format (ic:hasAddress to hasAddress).",
   "import.messages.warning.unknownUnitsConverted": "Some unknown unit_of_measure values were copied to unitDescription field. Please review and select the correct unit from the dropdown.",
+  "import.messages.warning.codeListModified": "Record with @id <b>{id}</b> in table <b>{tableName}</b> differs from the predefined code list item. The imported version will be used, which may cause inconsistencies.",
   "import.messages.warning.unrecognizedField": "Field <b>{fieldName}</b> in table <b>{tableName}</b> is inconsistent with the Basic Tier of the Common Impact Data Standard. This field will not be imported.",
   "import.messages.warning.notImport": "Field <b>{fieldName}</b> on table <b>{tableName}</b> will not be imported.",
   "import.messages.success": "Your data has been successfully imported.",

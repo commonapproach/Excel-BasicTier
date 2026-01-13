@@ -1,7 +1,7 @@
 /* global document fetch setTimeout clearTimeout URL Blob FileReader AbortController */
 import * as jsonld from "jsonld";
 import { Options } from "jsonld";
-import { IntlShape } from "react-intl";
+import { IntlShape, MessageDescriptor } from "react-intl";
 import { getContext } from "../domain/fetchServer/getContext";
 import { getUnitOptions } from "../domain/fetchServer/getUnitsOfMeasure";
 import { contextUrl, map, mapSFFModel } from "../domain/models";
@@ -204,6 +204,52 @@ export function convertIcHasAddressToHasAddress(obj: any): any {
   for (const key of Object.keys(newObj)) {
     if (newObj[key] && typeof newObj[key] === "object") {
       newObj[key] = convertIcHasAddressToHasAddress(newObj[key]);
+    }
+  }
+
+  return newObj;
+}
+
+/**
+ * Converts forFunderId property to forOrganization in FundingStatus objects.
+ * This handles backward compatibility for the property name change.
+ */
+export function convertForFunderIdToForOrganization(obj: any): any {
+  if (!obj || typeof obj !== "object") return obj;
+
+  // Handle arrays
+  if (Array.isArray(obj)) {
+    return obj.map(convertForFunderIdToForOrganization);
+  }
+
+  // Create a new object to avoid mutating the original
+  const newObj = { ...obj };
+
+  // Check if this is a FundingStatus object (by @type)
+  const isFundingStatus =
+    newObj["@type"] &&
+    ((typeof newObj["@type"] === "string" &&
+      (newObj["@type"] === "cids:FundingStatus" ||
+        newObj["@type"] === "FundingStatus" ||
+        newObj["@type"] === "sff:FundingStatus")) ||
+      (Array.isArray(newObj["@type"]) &&
+        newObj["@type"].some(
+          (t: string) =>
+            t === "cids:FundingStatus" || t === "FundingStatus" || t === "sff:FundingStatus"
+        )));
+
+  // Convert forFunderId to forOrganization if it exists and we are in a FundingStatus object
+  if (isFundingStatus && newObj["forFunderId"]) {
+    if (!newObj["forOrganization"]) {
+      newObj["forOrganization"] = newObj["forFunderId"];
+    }
+    delete newObj["forFunderId"];
+  }
+
+  // Recursively process nested objects
+  for (const key of Object.keys(newObj)) {
+    if (newObj[key] && typeof newObj[key] === "object") {
+      newObj[key] = convertForFunderIdToForOrganization(newObj[key]);
     }
   }
 
@@ -558,16 +604,16 @@ function removeAllNamespacePrefixes(obj: any): any {
     return obj.map((item) => removeAllNamespacePrefixes(item));
   } else if (obj !== null && typeof obj === "object") {
     const newObj: any = {};
-    
+
     for (const [key, value] of Object.entries(obj)) {
       let newKey = key;
-      
+
       // Preserve JSON-LD keywords (start with @)
       if (key.startsWith("@")) {
         newObj[key] = removeAllNamespacePrefixes(value);
         continue;
       }
-      
+
       // Remove any namespace prefix (anything before and including ":")
       if (key.includes(":")) {
         const parts = key.split(":");
@@ -576,14 +622,14 @@ function removeAllNamespacePrefixes(obj: any): any {
           newKey = parts[1];
         }
       }
-      
+
       // Recursively process the value
       newObj[newKey] = removeAllNamespacePrefixes(value);
     }
-    
+
     return newObj;
   }
-  
+
   return obj;
 }
 
@@ -615,4 +661,20 @@ function findFirstRecognizedType(types: string | string[]): string {
 
   // If no recognized type is found, return the first one
   return types[0];
+}
+
+/**
+ * Helper to format a message and ensure it returns a string.
+ * This handles cases where formatMessage returns ReactNode[] due to rich text formatting.
+ */
+export function formatMessageToString(
+  intl: IntlShape,
+  descriptor: MessageDescriptor,
+  values?: Record<string, any>
+): string {
+  const message = intl.formatMessage(descriptor, values);
+  if (Array.isArray(message)) {
+    return message.map((part) => (typeof part === "string" ? part : "")).join("");
+  }
+  return message as string;
 }

@@ -19,7 +19,7 @@ export class FundingStatus extends Base {
         semiRequired: true,
       },
       {
-        name: "forFunderId",
+        name: "forOrganization",
         type: "link",
         representedType: "string",
         defaultValue: "",
@@ -62,7 +62,7 @@ export class FundingStatus extends Base {
       },
       {
         name: "reportedDate",
-        type: "date",
+        type: "datetime",
         representedType: "string",
         defaultValue: "",
         unique: false,
