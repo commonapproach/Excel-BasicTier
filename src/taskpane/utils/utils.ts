@@ -1,7 +1,7 @@
 /* global document fetch setTimeout clearTimeout URL Blob FileReader AbortController */
 import * as jsonld from "jsonld";
 import { Options } from "jsonld";
-import { IntlShape } from "react-intl";
+import { IntlShape, MessageDescriptor } from "react-intl";
 import { getContext } from "../domain/fetchServer/getContext";
 import { getUnitOptions } from "../domain/fetchServer/getUnitsOfMeasure";
 import { contextUrl, map, mapSFFModel } from "../domain/models";
@@ -204,6 +204,52 @@ export function convertIcHasAddressToHasAddress(obj: any): any {
   for (const key of Object.keys(newObj)) {
     if (newObj[key] && typeof newObj[key] === "object") {
       newObj[key] = convertIcHasAddressToHasAddress(newObj[key]);
+    }
+  }
+
+  return newObj;
+}
+
+/**
+ * Converts forFunderId property to forOrganization in FundingStatus objects.
+ * This handles backward compatibility for the property name change.
+ */
+export function convertForFunderIdToForOrganization(obj: any): any {
+  if (!obj || typeof obj !== "object") return obj;
+
+  // Handle arrays
+  if (Array.isArray(obj)) {
+    return obj.map(convertForFunderIdToForOrganization);
+  }
+
+  // Create a new object to avoid mutating the original
+  const newObj = { ...obj };
+
+  // Check if this is a FundingStatus object (by @type)
+  const isFundingStatus =
+    newObj["@type"] &&
+    ((typeof newObj["@type"] === "string" &&
+      (newObj["@type"] === "cids:FundingStatus" ||
+        newObj["@type"] === "FundingStatus" ||
+        newObj["@type"] === "sff:FundingStatus")) ||
+      (Array.isArray(newObj["@type"]) &&
+        newObj["@type"].some(
+          (t: string) =>
+            t === "cids:FundingStatus" || t === "FundingStatus" || t === "sff:FundingStatus"
+        )));
+
+  // Convert forFunderId to forOrganization if it exists and we are in a FundingStatus object
+  if (isFundingStatus && newObj["forFunderId"]) {
+    if (!newObj["forOrganization"]) {
+      newObj["forOrganization"] = newObj["forFunderId"];
+    }
+    delete newObj["forFunderId"];
+  }
+
+  // Recursively process nested objects
+  for (const key of Object.keys(newObj)) {
+    if (newObj[key] && typeof newObj[key] === "object") {
+      newObj[key] = convertForFunderIdToForOrganization(newObj[key]);
     }
   }
 
@@ -558,16 +604,16 @@ function removeAllNamespacePrefixes(obj: any): any {
     return obj.map((item) => removeAllNamespacePrefixes(item));
   } else if (obj !== null && typeof obj === "object") {
     const newObj: any = {};
-    
+
     for (const [key, value] of Object.entries(obj)) {
       let newKey = key;
-      
+
       // Preserve JSON-LD keywords (start with @)
       if (key.startsWith("@")) {
         newObj[key] = removeAllNamespacePrefixes(value);
         continue;
       }
-      
+
       // Remove any namespace prefix (anything before and including ":")
       if (key.includes(":")) {
         const parts = key.split(":");
@@ -576,14 +622,14 @@ function removeAllNamespacePrefixes(obj: any): any {
           newKey = parts[1];
         }
       }
-      
+
       // Recursively process the value
       newObj[newKey] = removeAllNamespacePrefixes(value);
     }
-    
+
     return newObj;
   }
-  
+
   return obj;
 }
 
@@ -615,4 +661,83 @@ function findFirstRecognizedType(types: string | string[]): string {
 
   // If no recognized type is found, return the first one
   return types[0];
+}
+
+/**
+ * Helper to format a message and ensure it returns a string.
+ * This handles cases where formatMessage returns ReactNode[] due to rich text formatting.
+ */
+export function formatMessageToString(
+  intl: IntlShape,
+  descriptor: MessageDescriptor,
+  values?: Record<string, any>
+): string {
+  const message = intl.formatMessage(descriptor, values);
+  if (Array.isArray(message)) {
+    return message.map((part) => (typeof part === "string" ? part : "")).join("");
+  }
+  return message as string;
+}
+
+/**
+ * Converts 'identifier' field to 'org:hasIdentifier' in OrganizationID objects for backward compatibility.
+ * Also normalizes the @type from 'org:OrganizationID' to 'sff:OrganizationID'.
+ * @param obj - The object or array to process
+ * @returns The object with updated property names
+ */
+export function convertOrganizationIDFields(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(convertOrganizationIDFields);
+  } else if (obj && typeof obj === "object") {
+    // Check if this is an OrganizationID object
+    const typeVal = obj["@type"];
+    const isOrganizationID =
+      typeVal &&
+      ((typeof typeVal === "string" &&
+        (typeVal === "org:OrganizationID" ||
+          typeVal === "sff:OrganizationID" ||
+          typeVal === "OrganizationID")) ||
+        (Array.isArray(typeVal) &&
+          typeVal.some(
+            (t: string) =>
+              t === "org:OrganizationID" || t === "sff:OrganizationID" || t === "OrganizationID"
+          )));
+
+    if (isOrganizationID) {
+      // Normalize @type to sff:OrganizationID
+      if (typeof typeVal === "string" && typeVal !== "sff:OrganizationID") {
+        obj["@type"] = "sff:OrganizationID";
+      } else if (Array.isArray(typeVal)) {
+        obj["@type"] = typeVal.map((t: string) =>
+          t === "org:OrganizationID" || t === "OrganizationID" ? "sff:OrganizationID" : t
+        );
+      }
+
+      // Convert 'identifier' to 'org:hasIdentifier' if present
+      if (
+        Object.prototype.hasOwnProperty.call(obj, "identifier") &&
+        !Object.prototype.hasOwnProperty.call(obj, "org:hasIdentifier") &&
+        !Object.prototype.hasOwnProperty.call(obj, "hasIdentifier")
+      ) {
+        obj["org:hasIdentifier"] = obj["identifier"];
+        delete obj["identifier"];
+      }
+
+      // Convert 'issuedBy' to 'org:issuedBy' if present
+      if (
+        Object.prototype.hasOwnProperty.call(obj, "issuedBy") &&
+        !Object.prototype.hasOwnProperty.call(obj, "org:issuedBy")
+      ) {
+        obj["org:issuedBy"] = obj["issuedBy"];
+        delete obj["issuedBy"];
+      }
+    }
+
+    // Recursively process all properties
+    for (const key of Object.keys(obj)) {
+      obj[key] = convertOrganizationIDFields(obj[key]);
+    }
+    return obj;
+  }
+  return obj;
 }

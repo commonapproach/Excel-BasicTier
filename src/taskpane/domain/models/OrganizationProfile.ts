@@ -4,11 +4,10 @@ import {
   getAllProvinceTerritory,
 } from "../fetchServer/getCodeLists";
 import { Base } from "./Base";
-import { EquityDeservingGroup } from "./EquityDeservingGroup";
+import { Characteristic } from "./Characteristic";
 import { FundingStatus } from "./FundingStatus";
 import { Organization } from "./Organization";
 import { Person } from "./Person";
-import { PopulationServed } from "./PopulationServed";
 import { Sector } from "./Sector";
 import { TeamProfile } from "./TeamProfile";
 
@@ -118,7 +117,7 @@ export class OrganizationProfile extends Base {
         type: "link",
         representedType: "array",
         defaultValue: [],
-        link: { table: PopulationServed, field: "forOrganizationProfile" },
+        link: { table: Characteristic, field: "forOrganizationProfile" },
         unique: false,
         notNull: false,
         required: false,
@@ -140,17 +139,6 @@ export class OrganizationProfile extends Base {
         semiRequired: true,
       },
       {
-        name: "servesEDG",
-        type: "link",
-        representedType: "array",
-        defaultValue: [],
-        link: { table: EquityDeservingGroup, field: "forOrganizationProfile" },
-        unique: false,
-        notNull: false,
-        required: false,
-        semiRequired: true,
-      },
-      {
         name: "hasFundingStatus",
         type: "link",
         representedType: "array",
@@ -163,7 +151,7 @@ export class OrganizationProfile extends Base {
       },
       {
         name: "reportedDate",
-        type: "date",
+        type: "datetime",
         representedType: "string",
         defaultValue: "",
         unique: false,

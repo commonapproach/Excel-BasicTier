@@ -1,4 +1,5 @@
 import { IntlShape } from "react-intl";
+import { getCodeListByTableName } from "../domain/fetchServer/getCodeLists";
 import { TableInterface } from "../domain/interfaces/table.interface";
 import {
   ModelType,
@@ -13,9 +14,11 @@ import { validate } from "../domain/validation/validator";
 import { createSFFModuleSheetsAndTables, createSheetsAndTables } from "../taskpane";
 import { getCidsTableSuffix } from "../utils/typeHelpers";
 import {
+  convertForFunderIdToForOrganization,
   convertIcAddressToPostalAddress,
   convertIcHasAddressToHasAddress,
   convertNumericalValueToHasNumericalValue,
+  convertOrganizationIDFields,
   convertUnknownUnitToDescription,
   harmonizeCardinalityProperty,
   parseJsonLd,
@@ -66,23 +69,32 @@ export async function importData(
     // eslint-disable-next-line no-param-reassign
     jsonData = convertNumericalValueToHasNumericalValue(jsonData);
 
-    // 2. unknown unit_of_measure -> unitDescription (async)
+    // 2. Convert OrganizationID fields and normalize @type for backward compatibility
+    // eslint-disable-next-line no-param-reassign
+    jsonData = convertOrganizationIDFields(jsonData);
+
+    // 3. unknown unit_of_measure -> unitDescription (async)
     const unitConversion = await convertUnknownUnitToDescription(jsonData);
     // eslint-disable-next-line no-param-reassign
     jsonData = unitConversion.data;
     const convertedUnknownUnits = unitConversion.converted;
 
-    // 3. ic:hasAddress -> hasAddress
+    // 4. ic:hasAddress -> hasAddress
     const beforeAddressProp = JSON.stringify(jsonData);
     // eslint-disable-next-line no-param-reassign
     jsonData = convertIcHasAddressToHasAddress(jsonData);
     const propertyNamesConverted = JSON.stringify(jsonData) !== beforeAddressProp;
 
-    // 4. harmonize describesPopulation / i72:cardinality_of
+    // 5. Convert forFunderId to forOrganization for backward compatibility
+    const originalDataFunding = JSON.stringify(jsonData);
+    jsonData = convertForFunderIdToForOrganization(jsonData);
+    const convertedFundingPropertyNames = JSON.stringify(jsonData) !== originalDataFunding;
+
+    // 6. harmonize describesPopulation / i72:cardinality_of
     // eslint-disable-next-line no-param-reassign
     jsonData = harmonizeCardinalityProperty(jsonData);
 
-    // 5. Convert legacy Address objects to PostalAddress/Address shape
+    // 7. Convert legacy Address objects to PostalAddress/Address shape
     let convertedAddress = false;
     function convertAndTrack(obj: any): any {
       if (
@@ -146,7 +158,7 @@ export async function importData(
         })
       );
     }
-    if (propertyNamesConverted) {
+    if (propertyNamesConverted || convertedFundingPropertyNames) {
       warnings.push(
         intl.formatMessage({
           id: "import.messages.warning.propertyNamesConverted",
@@ -165,7 +177,14 @@ export async function importData(
       );
     }
 
-    const allWarns = [...warnings, ...warnIfUnrecognizedFieldsWillBeIgnored(jsonData, intl)];
+    // Check for modified code list items
+    const codeListWarnings = await warnIfCodeListItemsModified(jsonData, intl);
+
+    const allWarns = [
+      ...warnings,
+      ...warnIfUnrecognizedFieldsWillBeIgnored(jsonData, intl),
+      ...codeListWarnings,
+    ];
 
     allErrors = errors.join("<hr/>");
     allWarnings = allWarns.join("<hr/>");
@@ -1327,6 +1346,88 @@ function checkIfFieldIsRecognized(tableName: string, fieldName: string) {
     .includes(fieldName);
 }
 
+// Helper to normalize values for comparison
+function normalizeValue(value: any): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeValue).sort().join(",");
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value).trim();
+}
+
+async function warnIfCodeListItemsModified(
+  tableData: TableInterface[],
+  intl: IntlShape
+): Promise<string[]> {
+  const warnings: string[] = [];
+
+  for (const data of tableData) {
+    const tableName = getCidsTableSuffix(data["@type"]) || "";
+
+    // Only check predefined code list tables
+    if (!predefinedCodeLists.includes(tableName)) {
+      continue;
+    }
+
+    // Skip if no @id (validation will catch this elsewhere)
+    if (!data["@id"]) {
+      continue;
+    }
+
+    try {
+      // Get the predefined code list for this table
+      const codeList = await getCodeListByTableName(tableName);
+
+      if (codeList && codeList.length > 0) {
+        const existingItem = codeList.find((item) => item["@id"] === data["@id"]);
+
+        if (existingItem) {
+          // Check if imported data differs from predefined code list
+          let hasChanges = false;
+
+          // Cast to allow dynamic property access
+          const existingItemObj = existingItem as unknown as Record<string, unknown>;
+          for (const fieldName of Object.keys(existingItemObj)) {
+            if (fieldName === "@id") continue; // Skip ID comparison
+
+            const importedValue = normalizeValue(data[fieldName]);
+            const codeListValue = normalizeValue(existingItemObj[fieldName]);
+
+            if (importedValue !== codeListValue) {
+              hasChanges = true;
+              break;
+            }
+          }
+
+          if (hasChanges) {
+            warnings.push(
+              intl.formatMessage(
+                {
+                  id: "import.messages.warning.codeListModified",
+                  defaultMessage:
+                    "Record with @id <b>{id}</b> in table <b>{tableName}</b> differs from the predefined code list item. The imported version will be used, which may cause inconsistencies.",
+                },
+                { id: data["@id"], tableName, b: (str) => `<b>${str}</b>` }
+              )
+            );
+          }
+        }
+      }
+    } catch (error) {
+      // If we can't fetch the code list, just skip this check
+      // eslint-disable-next-line no-console
+      console.warn(`Could not check code list for ${tableName}:`, error);
+    }
+  }
+
+  return warnings;
+}
+
 function findLastFieldValueForNestedFields(data: any, field: FieldType, record: any) {
   if (field?.type === "object" && field.properties) {
     for (const prop of field.properties) {
@@ -1508,7 +1609,7 @@ async function processRecordFields(
 
   // First pass - process direct fields with proper name resolution
   for (const [key, value] of Object.entries(data)) {
-    if (key === "@type" || key === "@context" || !checkIfFieldIsRecognized(tableName, key)) {
+    if (key === "@context" || !checkIfFieldIsRecognized(tableName, key)) {
       continue;
     }
 
@@ -1594,7 +1695,11 @@ async function processRecordFields(
         typeof newValue !== "string"
       ) {
         try {
-          newValue = newValue.toString();
+          if (Array.isArray(newValue)) {
+            newValue = newValue.join(", ");
+          } else {
+            newValue = newValue.toString();
+          }
         } catch (_) {
           newValue = null;
         }

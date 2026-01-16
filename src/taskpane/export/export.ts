@@ -1,7 +1,11 @@
 import moment from "moment-timezone";
 import { IntlShape } from "react-intl";
 import { CodeList, getCodeListByTableName } from "../domain/fetchServer/getCodeLists";
-import { UNIT_DEFINITIONS, UNIT_IRI, getUnitDefinition } from "../domain/fetchServer/getUnitsOfMeasure";
+import {
+  getUnitDefinition,
+  UNIT_DEFINITIONS,
+  UNIT_IRI,
+} from "../domain/fetchServer/getUnitsOfMeasure";
 import { TableInterface } from "../domain/interfaces/table.interface";
 import {
   contextUrl,
@@ -15,44 +19,44 @@ import {
 } from "../domain/models";
 import { Base as BaseModel, FieldType } from "../domain/models/Base";
 import { validate } from "../domain/validation/validator";
-import { downloadJSONLD } from "../utils/utils";
+import { downloadJSONLD, formatMessageToString } from "../utils/utils";
 
 function removeNamespacePrefixesFromExport(items: any[]): any[] {
-  return items.map(item => {
-    if (!item || typeof item !== 'object') return item;
-    
+  return items.map((item) => {
+    if (!item || typeof item !== "object") return item;
+
     const cleaned: any = {};
-    
+
     for (const [key, value] of Object.entries(item)) {
       let newKey = key;
-      
+
       // Preserve JSON-LD keywords (@context, @id, @type, etc.)
-      if (key.startsWith('@')) {
+      if (key.startsWith("@")) {
         cleaned[key] = value;
         continue;
       }
-      
+
       // Remove namespace prefix from property names
       // e.g., "rdfs:label" => "label", "i72:value" => "value"
-      if (key.includes(':')) {
-        const parts = key.split(':');
+      if (key.includes(":")) {
+        const parts = key.split(":");
         if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0) {
           newKey = parts[1];
         }
       }
-      
+
       // Recursively clean nested objects
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
         cleaned[newKey] = removeNamespacePrefixesFromExport([value])[0];
       } else if (Array.isArray(value)) {
         // For arrays, check if items are objects that need cleaning
-        const hasObjects = value.some(v => v && typeof v === 'object');
+        const hasObjects = value.some((v) => v && typeof v === "object");
         cleaned[newKey] = hasObjects ? removeNamespacePrefixesFromExport(value) : value;
       } else {
         cleaned[newKey] = value;
       }
     }
-    
+
     return cleaned;
   });
 }
@@ -84,17 +88,18 @@ export async function exportData(
     for (const [key] of Object.entries(fullMap)) {
       if (!tableNames.includes(key)) {
         setDialogContent(
-          intl.formatMessage({
+          formatMessageToString(intl, {
             id: "generics.error",
             defaultMessage: "Error",
           }),
-          intl.formatMessage(
+          formatMessageToString(
+            intl,
             {
               id: "export.messages.error.missingTable",
               defaultMessage:
                 "Table <b>{tableName}</b> is missing. Please create the tables first.",
             },
-            { tableName: key, b: (str) => `<b>${str}</b>` }
+            { tableName: key, b: (str: string) => `<b>${str}</b>` }
           )
         );
         return;
@@ -161,6 +166,9 @@ export async function exportData(
           if (existingItem) {
             let hasChanges = false;
             for (const fieldName of Object.keys(existingItem)) {
+              // Skip @type field as it might not exist in the table
+              if (fieldName === "@type") continue;
+
               const fieldIndex = headers.indexOf(fieldName);
               if (fieldIndex !== -1) {
                 const recordValue = recordValues[fieldIndex];
@@ -179,22 +187,21 @@ export async function exportData(
             }
 
             if (hasChanges) {
-              // Skip warning for EquityDeservingGroup - descriptions were added to codelist
-              if (table.name !== "EquityDeservingGroup") {
-                changeOnDefaultCodeListsWarning.push(
-                  intl.formatMessage(
-                    {
-                      id: "export.messages.warning.codeListChangesIgnored",
-                      defaultMessage: "Changes made in the predefined code list item with @id <b>{id}</b> in table <b>{tableName}</b> will be ignored.",
-                    },
-                    {
-                      id: recordId,
-                      tableName: table.name,
-                      b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
-                    }
-                  ) as string
-                );
-              }
+              changeOnDefaultCodeListsWarning.push(
+                formatMessageToString(
+                  intl,
+                  {
+                    id: "export.messages.warning.codeListChangesIgnored",
+                    defaultMessage:
+                      "Changes made in the predefined code list item with @id <b>{id}</b> in table <b>{tableName}</b> will be ignored.",
+                  },
+                  {
+                    id: recordId,
+                    tableName: table.name,
+                    b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
+                  }
+                ) as string
+              );
             }
           }
           continue;
@@ -205,7 +212,7 @@ export async function exportData(
           // Find a matching code list item where all fields except @id match
           const similarItem = codeList.find((item) =>
             Object.keys(item).every((key) => {
-              if (key === "@id") return true;
+              if (key === "@id" || key === "@type") return true;
 
               const fieldIndex = headers.indexOf(key);
               if (fieldIndex === -1) return true;
@@ -222,7 +229,8 @@ export async function exportData(
             const recordId = recordIdIndex !== -1 ? recordValues[recordIdIndex] : "";
 
             changeOnDefaultCodeListsWarning.push(
-              intl.formatMessage(
+              formatMessageToString(
+                intl,
                 {
                   id: "export.messages.warning.codeListSimilarItem",
                   defaultMessage:
@@ -246,8 +254,8 @@ export async function exportData(
           table.name === "Population"
             ? "i72:Population"
             : isSFFTable
-            ? `sff:${table.name}`
-            : `cids:${table.name}`;
+              ? `sff:${table.name}`
+              : `cids:${table.name}`;
         const row: TableInterface = {
           "@context": contextUrl,
           "@type": computedType,
@@ -355,23 +363,23 @@ export async function exportData(
 
     const { errors, warnings } = await validate(data, "export", intl);
 
-// Check for unexported fields and empty tables using new helper functions
-const unexportedFieldWarnings = await checkForUnexportedFields(context, tables, fullMap, intl);
-const emptyTableWarnings = await checkForEmptyTables(context, tables, fullMap, intl);
+    // Check for unexported fields and empty tables using new helper functions
+    const unexportedFieldWarnings = await checkForUnexportedFields(context, tables, fullMap, intl);
+    const emptyTableWarnings = await checkForEmptyTables(context, tables, fullMap, intl);
 
-// Include the code list warnings in the warnings
-const allWarnings = [
-  ...unexportedFieldWarnings,
-  ...warnings,
-  ...emptyTableWarnings,
-  ...changeOnDefaultCodeListsWarning,
-]
-  .filter(Boolean)
-  .join("<hr/>");
+    // Include the code list warnings in the warnings
+    const allWarnings = [
+      ...unexportedFieldWarnings,
+      ...warnings,
+      ...emptyTableWarnings,
+      ...changeOnDefaultCodeListsWarning,
+    ]
+      .filter(Boolean)
+      .join("<hr/>");
 
     if (errors.length > 0) {
       setDialogContent(
-        intl.formatMessage({
+        formatMessageToString(intl, {
           id: "generics.error",
           defaultMessage: "Error",
         }),
@@ -386,29 +394,29 @@ const allWarnings = [
 
     if (allWarnings.length > 0) {
       setDialogContent(
-        intl.formatMessage({
+        formatMessageToString(intl, {
           id: "generics.warning",
           defaultMessage: "Warning",
         }),
         allWarnings,
         () => {
           setDialogContent(
-            intl.formatMessage({
+            formatMessageToString(intl, {
               id: "generics.warning",
               defaultMessage: "Warning",
             }),
-            intl.formatMessage({
+            formatMessageToString(intl, {
               id: "export.messages.warning.continue",
               defaultMessage: "<p>Do you want to export anyway?</p>",
             }),
             () => {
               downloadJSONLD(finalData, `${getFileName(orgName)}.json`);
               setDialogContent(
-                intl.formatMessage({
+                formatMessageToString(intl, {
                   id: "generics.success",
                   defaultMessage: "Success",
                 }),
-                intl.formatMessage({
+                formatMessageToString(intl, {
                   id: "export.messages.success",
                   defaultMessage: "Data exported successfully!",
                 })
@@ -421,11 +429,11 @@ const allWarnings = [
     }
     downloadJSONLD(finalData, `${getFileName(orgName)}.json`);
     setDialogContent(
-      intl.formatMessage({
+      formatMessageToString(intl, {
         id: "generics.success",
         defaultMessage: "Success",
       }),
-      intl.formatMessage({
+      formatMessageToString(intl, {
         id: "export.messages.success",
         defaultMessage: "Data exported successfully!",
       })
@@ -459,14 +467,15 @@ async function checkForEmptyTables(
     // If dataRange doesn't exist OR rowCount is 0, the table is empty
     if (!dataRange || dataRange.rowCount === 0) {
       warnings.push(
-        intl.formatMessage(
+        formatMessageToString(
+          intl,
           {
             id: "export.messages.warning.emptyTable",
             defaultMessage: "Table <b>{tableName}</b> is empty",
           },
           {
             tableName: table.name,
-            b: (str) => `<b>${str}</b>`,
+            b: (str: string) => `<b>${str}</b>`,
           }
         )
       );
@@ -519,7 +528,8 @@ async function checkForUnexportedFields(
       // Warn if field is not in the model
       if (!internalFields.includes(field)) {
         warnings.push(
-          intl.formatMessage(
+          formatMessageToString(
+            intl,
             {
               id: Object.keys(map).includes(table.name)
                 ? "export.messages.warning.fieldWillNotBeExported"
@@ -592,7 +602,8 @@ async function processRecord(
       if (optionField) {
         row[field.name] = field.representedType === "array" ? [optionField.id] : optionField.id;
       } else {
-        row[field.name] = field.defaultValue;
+        // Preserve user-entered value even if not in predefined options
+        row[field.name] = field.representedType === "array" ? [fieldValue] : fieldValue;
       }
     } else if (field.type === "multiselect") {
       const fieldValue = value ?? "";
@@ -603,21 +614,22 @@ async function processRecord(
       if (valuesArray.length > 0) {
         isEmpty = false;
       }
-      let optionFields = [];
+      let optionFields: { id: string; name: string }[] = [];
       if (field.getOptionsAsync) {
         const options = await field.getOptionsAsync();
         optionFields = options.filter((opt) => valuesArray.includes(opt.name));
       } else {
         optionFields = field.selectOptions?.filter((opt) => valuesArray.includes(opt.name)) || [];
       }
-      if (optionFields.length > 0) {
-        row[field.name] =
-          field.representedType === "array"
-            ? optionFields.map((opt) => opt.id)
-            : optionFields.map((opt) => opt.id);
-      } else {
-        row[field.name] = field.defaultValue;
-      }
+      // Get IDs for recognized options
+      const recognizedOptionIds = optionFields.map((opt) => opt.id);
+      // Preserve unrecognized option names (custom values)
+      const unrecognizedOptionNames = valuesArray.filter(
+        (val) => !optionFields.some((opt) => opt.name === val)
+      );
+      const combinedValues = [...recognizedOptionIds, ...unrecognizedOptionNames];
+      row[field.name] =
+        field.representedType === "array" ? combinedValues : combinedValues.join(", ");
     } else if (field.type === "datetime") {
       let fieldValue = value ?? "";
       if (fieldValue && (typeof fieldValue === "string" || typeof fieldValue === "number")) {
@@ -676,7 +688,7 @@ async function processRecord(
       }
       row[field.name] = exportValue as any; // number or null handled
     } else {
-      const fieldValue = value ?? "";
+      const fieldValue = value ?? field.defaultValue;
       if (fieldValue || fieldValue === 0) {
         isEmpty = false;
       }
@@ -684,11 +696,16 @@ async function processRecord(
       if (Array.isArray(fieldValue) && field.representedType === "array") {
         exportValue = fieldValue;
       } else if (!Array.isArray(fieldValue) && field.representedType === "array") {
-        exportValue = fieldValue ? [fieldValue] : field.defaultValue;
+        // Handle comma-separated values for array fields (e.g., @type with multiple types)
+        if (typeof fieldValue === "string" && fieldValue.includes(",")) {
+          exportValue = fieldValue.split(",").map((s) => s.trim());
+        } else {
+          exportValue = fieldValue ? [fieldValue] : field.defaultValue;
+        }
       } else {
-        exportValue = fieldValue.toString() || field.defaultValue;
+        exportValue = fieldValue ? fieldValue.toString() : field.defaultValue;
       }
-      row[field.name] = exportValue as any; // number or null handled
+      row[field.name] = exportValue as any;
     }
   }
 

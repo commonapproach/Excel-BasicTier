@@ -28,6 +28,12 @@ import {
 // Hidden sheets hold code lists used for data validation. StreetType & StreetDirection removed; UnitsOfMeasure added.
 const hiddenSheets = ["ProvinceTerritory", "OrganizationType", "Locality", "UnitsOfMeasure"];
 
+// Mapping from code list name to target table name (when they differ)
+const codeListToTableMap: Record<string, string> = {
+  SDGImpacts: "Theme",
+  // FundingState maps to itself (same name), no entry needed
+};
+
 // Replace existing silent mode implementation with this more comprehensive solution
 let inSilentMode = false;
 let silentModeOperations = 0;
@@ -972,9 +978,16 @@ export async function populateCodeLists() {
       sheets.load("items/name");
       await context.sync();
 
-      // Check which predefined lists actually exist as sheets
+      // Get existing sheet names
       const existingSheetNames = new Set(sheets.items.map((sheet) => sheet.name));
-      const availableLists = predefinedCodeLists.filter((name) => existingSheetNames.has(name));
+
+      // Check which predefined lists can be processed:
+      // - Either the code list name exists as a sheet, OR
+      // - The mapped table name exists as a sheet
+      const availableLists = predefinedCodeLists.filter((name) => {
+        const targetTable = codeListToTableMap[name] || name;
+        return existingSheetNames.has(targetTable);
+      });
 
       // Load all code list data in parallel with better error handling
       const codeListData = await Promise.all(
@@ -1007,8 +1020,11 @@ export async function populateCodeLists() {
         }
 
         try {
-          const sheet = sheets.getItem(codeList);
-          const table = sheet.tables.getItem(codeList);
+          // Get the target table name (may differ from code list name)
+          const targetTableName = codeListToTableMap[codeList] || codeList;
+
+          const sheet = sheets.getItem(targetTableName);
+          const table = sheet.tables.getItem(targetTableName);
 
           // Get table range and data in one batch
           const tableRange = table.getRange();
@@ -1016,7 +1032,7 @@ export async function populateCodeLists() {
           await context.sync();
 
           // Populate with optimized function
-          await populateCodeListBatched(context, codeList, tableRange, data);
+          await populateCodeListBatched(context, targetTableName, tableRange, data);
         } catch (error) {
           console.error(`Error populating ${codeList}: ${error}`);
         }
@@ -1047,7 +1063,7 @@ async function populateCodeListBatched(
     // Now we can safely access values
     const tableValues = tableRange.values;
 
-    // Determine column structure
+    // Determine column structure based on table type
     const headers = hiddenSheets.includes(tableName) ? ["id", "name"] : Object.keys(data[0]);
     const idColumnName = hiddenSheets.includes(tableName) ? "id" : "@id";
     const idColumnIndex = tableValues[0].indexOf(idColumnName);
@@ -1126,7 +1142,7 @@ async function populateCodeListBatched(
               value = item["hasName"] || item["name"] || item["prefLabel"] || "";
             }
           } else {
-            // Standard code lists
+            // Standard code lists - use header directly
             value = item[header] || "";
           }
 

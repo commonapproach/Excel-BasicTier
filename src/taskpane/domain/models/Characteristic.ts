@@ -29,14 +29,14 @@ export class Characteristic extends Base {
         semiRequired: true,
       },
       {
-        name: "hasValue",
+        name: "hasDescription",
         type: "string",
         representedType: "string",
         defaultValue: "",
         unique: false,
         notNull: false,
         required: false,
-        semiRequired: true,
+        semiRequired: false,
       },
       {
         name: "hasCode",
@@ -47,7 +47,7 @@ export class Characteristic extends Base {
         unique: false,
         notNull: false,
         required: false,
-        semiRequired: true,
+        semiRequired: false,
       },
     ];
   }
