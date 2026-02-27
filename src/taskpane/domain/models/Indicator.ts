@@ -43,6 +43,16 @@ export class Indicator extends Base {
         semiRequired: false,
       },
       {
+				name: "hasCode",
+				type: "string",
+				representedType: "array",
+				defaultValue: [],
+				unique: false,
+				notNull: false,
+				required: false,
+				semiRequired: false,
+			},
+      {
         name: "unitDescription",
         displayName: "unitDescription",
         type: "string",

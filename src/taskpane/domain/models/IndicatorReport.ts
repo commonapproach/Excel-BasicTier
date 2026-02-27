@@ -24,7 +24,7 @@ export class IndicatorReport extends Base {
 				displayName: "hasName",
 				type: "string",
 				representedType: "string",
-				unique: true,
+				unique: false,
 				notNull: true,
 				required: true,
 				semiRequired: false,

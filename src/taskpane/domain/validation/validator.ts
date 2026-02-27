@@ -129,8 +129,8 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
           if (hasAlternativeId) continue;
         }
 
-        if (operation === "import" && field.name !== "@id") {
-          validatorWarnings.add(
+        if (field.name === "@id") {
+          validatorErrors.add(
             formatMessageToString(
               intl,
               {
@@ -146,7 +146,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
             )
           );
         } else {
-          validatorErrors.add(
+          validatorWarnings.add(
             formatMessageToString(
               intl,
               {
@@ -242,7 +242,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
           continue;
         }
         // For other null/empty values in notNull fields, add as error
-        validatorErrors.add(msg);
+        validatorWarnings.add(msg);
       }
     }
 
@@ -821,9 +821,7 @@ async function validateLinkedFields(
             b: (str: string) => `<b>${str}</b>`,
           }
         );
-        if (field.required && operation === "export") {
-          validatorErrors.add(msg);
-        } else if (field.required || field.semiRequired) {
+        if (field.required || field.semiRequired) {
           validatorWarnings.add(msg);
         }
       }
