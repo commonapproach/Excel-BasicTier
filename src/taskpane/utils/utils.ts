@@ -704,14 +704,14 @@ export function convertOrganizationIDFields(obj: any): any {
           )));
 
     if (isOrganizationID) {
-      // Normalize @type to sff:OrganizationID
-      if (typeof typeVal === "string" && typeVal !== "sff:OrganizationID") {
-        obj["@type"] = "sff:OrganizationID";
-      } else if (Array.isArray(typeVal)) {
-        obj["@type"] = typeVal.map((t: string) =>
-          t === "org:OrganizationID" || t === "OrganizationID" ? "sff:OrganizationID" : t
-        );
-      }
+  // Normalize @type to org:OrganizationID
+  if (typeof typeVal === "string" && typeVal !== "org:OrganizationID") {
+    obj["@type"] = "org:OrganizationID";
+  } else if (Array.isArray(typeVal)) {
+    obj["@type"] = typeVal.map((t: string) =>
+      t === "sff:OrganizationID" || t === "OrganizationID" ? "org:OrganizationID" : t
+    );
+  }
 
       // Convert 'identifier' to 'org:hasIdentifier' if present
       if (

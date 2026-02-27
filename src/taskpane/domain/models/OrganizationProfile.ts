@@ -125,7 +125,7 @@ export class OrganizationProfile extends Base {
       },
       {
         name: "organizationType",
-        type: "select",
+        type: "multiselect",
         representedType: "array",
         defaultValue: [],
         selectOptions: [],
