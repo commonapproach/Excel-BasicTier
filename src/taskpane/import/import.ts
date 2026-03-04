@@ -13,6 +13,8 @@ import { FieldType } from "../domain/models/Base";
 import { validate } from "../domain/validation/validator";
 import { createSFFModuleSheetsAndTables, createSheetsAndTables } from "../taskpane";
 import { getCidsTableSuffix } from "../utils/typeHelpers";
+import { populateSeliGLI } from "../helpers/seliGLI";
+import { populateSeliGLISFI } from "../helpers/seliGLISFI";
 import {
   convertForFunderIdToForOrganization,
   convertIcAddressToPostalAddress,
@@ -343,7 +345,27 @@ async function importByData(intl: IntlShape, context: Excel.RequestContext, json
     if (needsSFFModuleTables) {
       await createSFFModuleSheetsAndTables(intl);
     }
+    const hasSeliGliRefs = jsonData.some((data: any) => {
+      const forIndicator = data["forIndicator"];
+      if (!forIndicator) return false;
+      const values = Array.isArray(forIndicator) ? forIndicator : [forIndicator];
+      return values.some((v: string) => typeof v === "string" && v.includes("codelist.commonapproach.org/SELI-GLI") );
+});
+    if (hasSeliGliRefs) {
+    await populateSeliGLI();
+}
 
+    const hasSeliGliSfiRefs = jsonData.some((data: any) => {
+      const forIndicator = data["forIndicator"];
+      if (!forIndicator) return false;
+      const values = Array.isArray(forIndicator) ? forIndicator : [forIndicator];
+      return values.some(
+        (v: string) => typeof v === "string" && v.includes("codelist.commonapproach.org/SELI-GLI-SFI")
+      );
+    });
+    if (hasSeliGliSfiRefs) {
+      await populateSeliGLISFI();
+    }
     // Preload worksheets and tables to avoid repeated load operations
     const tableCache = new Map<
       string,

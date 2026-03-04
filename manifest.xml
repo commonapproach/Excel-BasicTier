@@ -4,7 +4,7 @@
   xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
   xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="TaskPaneApp">
   <Id>95c11482-1b19-4b93-ab9a-1c6d8fd5d8de</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.0.2</Version>
   <ProviderName>Common Approach To Impact Measurement</ProviderName>
   <DefaultLocale>en-CA</DefaultLocale>
   <DisplayName DefaultValue="Common Impact Data Standard">

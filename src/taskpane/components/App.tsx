@@ -11,6 +11,7 @@ import * as React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useDialogContext } from "../context/DialogContext";
 import { populateSeliGLI } from "../helpers/seliGLI";
+import { populateSeliGLISFI } from "../helpers/seliGLISFI";
 import { importData } from "../import/import";
 import {
   createSFFModuleSheetsAndTables,
@@ -21,7 +22,7 @@ import ExportDialog from "./ExportDialog";
 import Header from "./Header";
 
 interface AppProps {}
-
+const APP_VERSION = "1.0.0.2";
 const useStyles = makeStyles({
   root: {
     minHeight: "100vh",
@@ -444,6 +445,35 @@ const App: React.FC<AppProps> = () => {
           />
         </Button>
         <Button
+          content={intl.formatMessage({ id: "app.button.importSeliGLISFI" })}
+          onClick={async () => {
+            setIsLoading(true);
+            try {
+              await populateSeliGLISFI();
+              dialog.showDialog(
+                intl.formatMessage({ id: "generics.success" }),
+                intl.formatMessage({ id: "app.button.importSeliGLISFI.success" })
+              );
+            } catch (error: any) {
+              dialog.showDialog(
+                intl.formatMessage({ id: "generics.error" }),
+                error.message || intl.formatMessage({ id: "generics.error.message" })
+              );
+            } finally {
+              setIsLoading(false);
+            }
+          }}
+          appearance="outline"
+          color="brand"
+          icon={<ArrowSync24Regular />}
+          iconPosition="before"
+          disabled={isLoading}
+          className={styles.button}
+          style={{ borderColor: "#1B4B9D", color: "#1B4B9D" }}
+        >
+          <FormattedMessage id="app.button.importSeliGLISFI" defaultMessage="SELI-GLI-SFI" />
+        </Button>
+        <Button
           content={intl.formatMessage({ id: "app.button.userGuide" })}
           onClick={() => {
             window.open(
@@ -507,6 +537,9 @@ const App: React.FC<AppProps> = () => {
             defaultMessage="Basic Tier + SFF sample data file"
           />
         </span>
+      </p>
+      <p style={{ fontSize: "0.7rem", color: "#999999", textAlign: "center", marginTop: "8px" }}>
+       Version {APP_VERSION}
       </p>
     </div>
   );
