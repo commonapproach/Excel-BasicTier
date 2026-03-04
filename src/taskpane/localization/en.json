@@ -8,6 +8,8 @@
   "app.button.importData": "Import Data",
   "app.button.importSeliGLI": "SELI-GLI",
   "app.button.importSeliGLI.success": "SELI-GLI Themes, Outcomes, and Indicators imported successfully!",
+  "app.button.importSeliGLISFI": "SELI-GLI-SFI",
+  "app.button.importSeliGLISFI.success": "SELI-GLI-SFI Themes, Outcomes, and Indicators imported successfully!",
   "app.button.exportData": "Export Data",
   "app.button.createTables": "Create Tables",
   "app.button.createSFFTables": "SFF Tables",

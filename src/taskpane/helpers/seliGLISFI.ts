@@ -1,6 +1,6 @@
 /* global Excel, console */
 /* eslint-disable no-console */
-import { fetchAndParseSeliGLI, SeliGLIData } from "../domain/fetchServer/getSeliGLI";
+import { fetchAndParseSeliGLI, SeliGLIData } from "../domain/fetchServer/getSeliGLISFI";
 
 interface SeliIndicatorExtended {
   // Allow derived field access without excessive type narrowing
@@ -12,7 +12,7 @@ interface SeliIndicatorExtended {
   forTheme?: string; // derived if missing
 }
 
-export async function populateSeliGLI(): Promise<{
+export async function populateSeliGLISFI(): Promise<{
   themes: number;
   outcomes: number;
   indicators: number;
