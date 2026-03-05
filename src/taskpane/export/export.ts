@@ -47,7 +47,9 @@ function removeNamespacePrefixesFromExport(items: any[]): any[] {
 
       // Recursively clean nested objects
       if (value && typeof value === "object" && !Array.isArray(value)) {
-        cleaned[newKey] = removeNamespacePrefixesFromExport([value])[0];
+        const nested = removeNamespacePrefixesFromExport([value])[0];
+        delete nested["@context"];
+        cleaned[newKey] = nested;
       } else if (Array.isArray(value)) {
         // For arrays, check if items are objects that need cleaning
         const hasObjects = value.some((v) => v && typeof v === "object");
