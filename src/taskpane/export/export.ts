@@ -255,9 +255,11 @@ export async function exportData(
         const computedType =
           table.name === "Population"
             ? "i72:Population"
-            : isSFFTable
-              ? `sff:${table.name}`
-              : `cids:${table.name}`;
+            : table.name === "OrganizationID"
+              ? "org:OrganizationID"
+              : isSFFTable
+                ? `sff:${table.name}`
+                : `cids:${table.name}`;
         const row: TableInterface = {
           "@context": contextUrl,
           "@type": computedType,
