@@ -21,7 +21,6 @@ const validatorWarnings = new Set<string>();
 
 // External JSON-LD object types we knowingly include in the export (do not warn for these)
 const KNOWN_EXTERNAL_TYPES = new Set<string>([
-  // ISO 21972 unit model common classes (examples observed in TTL sources)
   "i72:Cardinality_unit",
   "i72:Compound_unit",
   "i72:Singular_unit",
@@ -32,7 +31,6 @@ const KNOWN_EXTERNAL_TYPES = new Set<string>([
   "i72:Derived_unit",
   "i72:Base_unit",
   "i72:Unit",
-  // ISO i72 Population object is external to CIDS tables
   "i72:Population",
 ]);
 
@@ -80,7 +78,6 @@ export async function validate(
 }
 
 async function validateRecords(tableData: TableInterface[], operation: Operation, intl: IntlShape) {
-  // Records to keep track of unique values
   const uniqueRecords: Record<string, Set<any>> = {};
 
   await validateLinkedFields(tableData, operation, intl);
@@ -97,23 +94,18 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
     }
     const id = data["@id"];
 
-    // Initialize the schema for the table
     let cid;
-    // Check if type is part of the SFF module
     if (mapSFFModel[tableName as SFFModelType]) {
       cid = new mapSFFModel[tableName as SFFModelType]();
     } else {
       cid = new map[tableName as ModelType]();
     }
 
-    // Initialize a record for this table if not already present
     if (!uniqueRecords[tableName]) {
       uniqueRecords[tableName] = new Set();
     }
 
-    //check if required fields are present
     for (const field of cid.getAllFields()) {
-      // For link fields, we defer presence/emptiness reporting to validateLinkedFields to avoid duplicate messages
       if (field.type === "link") continue;
       if (
         field.required &&
@@ -121,7 +113,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
           .map((d) => (d.indexOf(":") !== -1 ? d.split(":")[1] : d))
           .includes(field.name.indexOf(":") !== -1 ? field.name.split(":")[1] : field.name)
       ) {
-        // Check for alternative ID fields if @id is missing
         if (field.name === "@id") {
           const hasAlternativeId = Object.keys(data).some(
             (key) => key === "hasIdentifier" || key.endsWith(":hasIdentifier")
@@ -167,7 +158,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
 
     for (const field of cid.getAllFields()) {
       if (field.semiRequired) {
-        if (field.type === "link") continue; // Avoid duplicate link warnings; handled in validateLinkedFields
+        if (field.type === "link") continue;
         if (
           !Object.keys(data)
             .map((d) => (d.indexOf(":") !== -1 ? d.split(":")[1] : d))
@@ -229,19 +220,15 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
           }
         );
 
-        // Special handling for number fields that can be zero (EDGProfile.hasSize, TeamProfile.hasTeamSize)
         const fieldValue = data[field.name] || data[field.name.split(":")[1]];
         const isNumberFieldWithZero = field.type === "number" && (fieldValue as unknown) === 0;
 
-        // Allow zero values for hasSize and hasTeamSize - treat as warning instead of error
         if (
           isNumberFieldWithZero &&
           (field.displayName === "hasSize" || field.displayName === "hasTeamSize")
         ) {
-          // Skip validation - zero is valid for these fields
           continue;
         }
-        // For other null/empty values in notNull fields, add as error
         validatorWarnings.add(msg);
       }
     }
@@ -273,7 +260,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
       }
 
       if (Array.isArray(fieldValue)) {
-        // check if fieldValue has duplicate values
         const uniqueValues = new Set(fieldValue);
         if (uniqueValues.size !== fieldValue.length) {
           validatorWarnings.add(
@@ -295,7 +281,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
       }
 
       if (fieldProps.type !== "object") {
-        // Warn if a field with type 'number' is not a valid number
         if (
           fieldProps.type === "number" &&
           fieldValue !== null &&
@@ -321,7 +306,7 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
             );
           }
         }
-        // Validate unique fields
+
         if (fieldProps?.unique) {
           const uniqueResult = validateUnique(
             tableName,
@@ -471,10 +456,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
           }
         }
 
-        // Validate field values against context for basic types
-        // xsd:string, xsd:anyURI, xsd:nonNegativeNumber, xsd:boolean, xsd:date
-        // If the the field is in the context and has a @type property of one of this types
-        // we need to validate the value against the type, e.g if the field is a xsd:boolean the value should be true or false
         const context: any = mapSFFModel[tableName as SFFModelType]
           ? await getContext(contextUrl[1])
           : await getContext(contextUrl[0]);
@@ -499,7 +480,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
                   }
                 )
               );
-              // set field value to default value
               data[fieldName] = "";
             } else if (value && fieldType === "xsd:anyURI") {
               try {
@@ -560,7 +540,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
                   }
                 )
               );
-              // set field value to default value
               data[fieldName] = false;
             } else if (value && fieldType === "xsd:date") {
               const validDateFormats = ["YYYY-MM-DD", "YYYY-MM-DDTHH:mm:ssZ"];
@@ -582,7 +561,6 @@ async function validateRecords(tableData: TableInterface[], operation: Operation
                     }
                   )
                 );
-                // set field value to default value
                 data[fieldName] = "";
               }
             }
@@ -601,7 +579,6 @@ function validateUnique(
   id: string,
   intl: IntlShape
 ): { isUnique: boolean; reason?: "invalidUrl" | "duplicate" } {
-  // Unique key for this field in the format "tableName.fieldName"
   if (!id) return { isUnique: false, reason: "duplicate" };
   let urlObject;
 
@@ -627,21 +604,16 @@ function validateUnique(
   }
 
   const baseUrl = `${urlObject.protocol}//${urlObject.hostname}`;
-
   const uniqueKey = `${tableName}.${fieldName}.${baseUrl}`;
 
-  // Initialize a record for this field if not already present
   if (!uniqueRecords[uniqueKey]) {
     // eslint-disable-next-line no-param-reassign
     uniqueRecords[uniqueKey] = new Set();
   }
 
-  // Check if the value already exists
   if (uniqueRecords[uniqueKey].has(fieldValue)) {
-    // Value is not unique
     return { isUnique: false, reason: "duplicate" };
   } else {
-    // Record this value as encountered and return true
     uniqueRecords[uniqueKey].add(fieldValue);
     return { isUnique: true };
   }
@@ -661,7 +633,6 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
   const typeVal = data["@type"];
   let mainType: string | null = null;
 
-  // Recognize cids:, sff:, and org: namespaces (org: is used for OrganizationID and related types)
   const isStandard = (t: string) =>
     t.startsWith("cids:") || t.startsWith("sff:") || t.startsWith("org:");
   if (typeof typeVal === "string") {
@@ -670,10 +641,7 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
     mainType = typeVal.find((t: any) => typeof t === "string" && isStandard(t)) || null;
   }
 
-  // If no standard type is present, this is an external object (e.g., i72 unit)
-  // Keep a warning about unrecognized table/type unless in KNOWN_EXTERNAL_TYPES.
   if (!mainType) {
-    // Try to present a meaningful type/table name from the first non-cids type if available
     let externalType: string | null = null;
     if (typeof typeVal === "string") {
       externalType = typeVal;
@@ -688,7 +656,6 @@ function validateTypeProp(data: any, intl: IntlShape): boolean {
         ? externalType.split(":")[1]
         : externalType
       : "unknown";
-    // Suppress the warning for known external types we intentionally include (e.g., i72 units)
     if (!externalType || !KNOWN_EXTERNAL_TYPES.has(externalType)) {
       validatorWarnings.add(
         formatMessageToString(
@@ -774,16 +741,13 @@ async function validateLinkedFields(
       return;
     }
 
-    // Initialize the schema for the table
     let cid;
-    // Check if type is part of the SFF module
     if (mapSFFModel[tableName as SFFModelType]) {
       cid = new mapSFFModel[tableName as SFFModelType]();
     } else {
       cid = new map[tableName as ModelType]();
     }
 
-    // for each field that has type link, check if all linked ids exists
     const fields = cid.getAllFields();
     const linkedFields = fields.filter((field) => field.type === "link");
     linkedFields.forEach(async (field) => {
@@ -804,6 +768,8 @@ async function validateLinkedFields(
       }
 
       if (data[fieldName].length === 0) {
+        // Suppress warning for Indicator.forTheme — not required for SELI indicators
+        if (tableName === "Indicator" && fieldName === "forTheme") return;
         const msg = formatMessageToString(
           intl,
           {
@@ -882,7 +848,6 @@ async function validateLinkedFields(
         const typeVal = linkedData["@type"];
         const linkedMainType = getPrimaryStandardType(typeVal);
         const linkedTableName = linkedMainType ? linkedMainType.split(":")[1] : "";
-        // Special-case: Population is modeled as i72:Population (external to CIDS)
         const isI72Population =
           linkedTable === "Population" &&
           ((typeof typeVal === "string" && typeVal === "i72:Population") ||
@@ -895,6 +860,13 @@ async function validateLinkedFields(
 
       data[fieldName].forEach((item) => {
         if (!linkedIds.includes(item)) {
+          // Suppress warnings for SELI-GLI and SDG codelist IRIs
+          const isExternalCodelist =
+            item.includes("codelist.commonapproach.org/SELI-GLI") ||
+            item.includes("codelist.commonapproach.org/SELI-GLI-SFI") ||
+            item.startsWith("https://metadata.un.org/sdg/") ||
+            item.includes("codelist.commonapproach.org/SDGImpacts");
+          if (isExternalCodelist) return;
           validatorWarnings.add(
             formatMessageToString(
               intl,
@@ -999,7 +971,6 @@ function validateIfEmptyFile(tableData: TableInterface[], intl: IntlShape) {
 }
 
 function isFieldValueNullOrEmpty(value: any) {
-  // Zero is a valid value for number fields
   if (typeof value === "number") {
     return false;
   }

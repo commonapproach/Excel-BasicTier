@@ -30,14 +30,11 @@ function removeNamespacePrefixesFromExport(items: any[]): any[] {
     for (const [key, value] of Object.entries(item)) {
       let newKey = key;
 
-      // Preserve JSON-LD keywords (@context, @id, @type, etc.)
       if (key.startsWith("@")) {
         cleaned[key] = value;
         continue;
       }
 
-      // Remove namespace prefix from property names
-      // e.g., "rdfs:label" => "label", "i72:value" => "value"
       if (key.includes(":")) {
         const parts = key.split(":");
         if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0) {
@@ -45,13 +42,11 @@ function removeNamespacePrefixesFromExport(items: any[]): any[] {
         }
       }
 
-      // Recursively clean nested objects
       if (value && typeof value === "object" && !Array.isArray(value)) {
         const nested = removeNamespacePrefixesFromExport([value])[0];
         delete nested["@context"];
         cleaned[newKey] = nested;
       } else if (Array.isArray(value)) {
-        // For arrays, check if items are objects that need cleaning
         const hasObjects = value.some((v) => v && typeof v === "object");
         cleaned[newKey] = hasObjects ? removeNamespacePrefixesFromExport(value) : value;
       } else {
@@ -62,6 +57,7 @@ function removeNamespacePrefixesFromExport(items: any[]): any[] {
     return cleaned;
   });
 }
+
 /* global Excel*/
 export async function exportData(
   intl: IntlShape,
@@ -69,17 +65,15 @@ export async function exportData(
   setDialogContent: (header: string, content: string, nextCallBack?: Function) => void
 ): Promise<void> {
   await Excel.run(async (context: Excel.RequestContext) => {
-    // Get the tables from the workbook
     const workbook = context.workbook;
     workbook.load("tables");
     await context.sync();
     const tables = workbook.tables.items;
     const data: TableInterface[] = [];
-    const changeOnDefaultCodeListsWarning: string[] = []; // Array to store warnings about code list changes
+    const changeOnDefaultCodeListsWarning: string[] = [];
 
     let fullMap = map;
 
-    // Check if any table of the SFF module is created
     const tableNamesOnBase = tables.map((table) => table.name);
     const sffModuleTables = Object.keys(mapSFFModel);
     if (sffModuleTables.some((table) => tableNamesOnBase.includes(table))) {
@@ -108,7 +102,6 @@ export async function exportData(
       }
     }
 
-    // Pre-fetch all code lists we'll need in one batch
     const codeListCache: Record<string, CodeList[]> = {};
     const codeListPromises = predefinedCodeLists
       .filter(tableNames.includes.bind(tableNames))
@@ -118,17 +111,14 @@ export async function exportData(
 
     await Promise.all(codeListPromises);
 
-    // First, prepare all the table objects we'll work with and queue all load operations
     const tablesToProcess = tables.filter((table) => Object.keys(fullMap).includes(table.name));
     const tableInfos = tablesToProcess.map((table) => {
       const tableRange = table.getRange();
       const tableHeaderRange = tableRange.getRow(0);
 
-      // Load all the properties we'll need
       tableHeaderRange.load("values");
       table.load("name");
 
-      // For data, we need to load the data body range separately
       const dataBodyRange = table.getDataBodyRange();
       dataBodyRange?.load("values");
 
@@ -140,12 +130,10 @@ export async function exportData(
       };
     });
 
-    // Execute a single sync to load all data
     await context.sync();
 
-    // Now process each table with loaded data
     for (const { table, tableHeaderRange, dataBodyRange, codeList } of tableInfos) {
-      if (!dataBodyRange) continue; // Skip if no data (empty table)
+      if (!dataBodyRange) continue;
 
       const headers = tableHeaderRange.values[0];
       const records = dataBodyRange.values;
@@ -153,22 +141,31 @@ export async function exportData(
       const cid: BaseModel = createInstance(table.name as ModelType | SFFModelType);
       const tableFields = cid.getTopLevelFields();
 
-      // Process all records for this table
       for (const recordValues of records) {
+        // Skip codelist-sourced reference rows (SDG Impacts, SELI-GLI, SELI-GLI-SFI, etc.)
+        // SELI-GLI Indicators are kept because they accumulate hasIndicatorReport links.
+        const rowId = idColumnIndex !== -1 ? String(recordValues[idColumnIndex] ?? "") : "";
+        const isCodelistId =
+          rowId.startsWith("https://codelist.commonapproach.org/") ||
+          rowId.startsWith("https://metadata.un.org/sdg/");
+        if (isCodelistId) {
+          const isSeliIndicator =
+            rowId.includes("SELI-GLI#Indicator") || rowId.includes("SELI-GLI-SFI#Indicator");
+          if (!isSeliIndicator) continue;
+        }
+
         // Skip records that are defined in the common approach code lists
         if (
           codeList &&
           idColumnIndex !== -1 &&
           codeList.find((item) => item["@id"] === recordValues[idColumnIndex])
         ) {
-          // Check if the record has changes compared to the code list item
           const recordId = recordValues[idColumnIndex];
           const existingItem = codeList.find((item) => item["@id"] === recordId);
 
           if (existingItem) {
             let hasChanges = false;
             for (const fieldName of Object.keys(existingItem)) {
-              // Skip @type field as it might not exist in the table
               if (fieldName === "@type") continue;
 
               const fieldIndex = headers.indexOf(fieldName);
@@ -176,7 +173,6 @@ export async function exportData(
                 const recordValue = recordValues[fieldIndex];
                 const existingValue = (existingItem as Record<string, any>)[fieldName];
 
-                // Compare values
                 if (
                   recordValue !== undefined &&
                   recordValue !== null &&
@@ -209,9 +205,7 @@ export async function exportData(
           continue;
         }
 
-        // Check if record is similar to code list item (all values match except @id)
         if (codeList) {
-          // Find a matching code list item where all fields except @id match
           const similarItem = codeList.find((item) =>
             Object.keys(item).every((key) => {
               if (key === "@id" || key === "@type") return true;
@@ -249,32 +243,34 @@ export async function exportData(
           }
         }
 
-        // Row initialization advanced logic to mirror latest Airtable extension:
-        // Population uses i72:Population; SFF module tables use sff: prefix; Address uses ic:; others cids:
+        // Compute @type: carve-outs for cids: classes that live in mapSFFModel
         const isSFFTable = Object.prototype.hasOwnProperty.call(mapSFFModel, table.name);
         const computedType =
           table.name === "Population"
             ? "i72:Population"
             : table.name === "OrganizationID"
               ? "org:OrganizationID"
-              : isSFFTable
-                ? `sff:${table.name}`
-                : `cids:${table.name}`;
+              : table.name === "Characteristic"
+                ? "cids:Characteristic"
+                : table.name === "Person"
+                  ? "cids:Person"
+                  : isSFFTable
+                    ? `sff:${table.name}`
+                    : `cids:${table.name}`;
+
         const row: TableInterface = {
           "@context": contextUrl,
           "@type": computedType,
           "@id": "",
         };
 
-        // Extract and set the @id
         const idColIndex = headers.indexOf("@id");
         if (idColIndex !== -1 && recordValues[idColIndex]) {
           row["@id"] = recordValues[idColIndex].toString();
         }
 
-        let isEmpty = true; // Flag to check if the row is empty
+        let isEmpty = true;
 
-        // Process all fields in one pass using the cached headers
         const [processedRow, rowIsEmpty] = await processRecord(
           tableFields,
           headers,
@@ -283,16 +279,13 @@ export async function exportData(
           isEmpty
         );
 
-        // Only add non-empty rows with valid @id
         if (!rowIsEmpty && processedRow["@id"]) {
           data.push(processedRow);
         }
       }
     }
 
-    // Post-processing enhancements (multi-typing, units, cleaning) before validation & warnings
-
-    // Add multi-typing for Indicators that have i72:cardinality_of link (become i72:Cardinality as additional @type)
+    // Add multi-typing for Indicators with i72:cardinality_of
     for (const item of data) {
       const typeVal = item["@type"];
       if (!typeVal) continue;
@@ -300,12 +293,12 @@ export async function exportData(
       const isIndicator = types.includes("cids:Indicator");
       if (isIndicator && item["i72:cardinality_of"]) {
         if (!types.includes("i72:Cardinality")) {
-          item["@type"] = [...types, "i72:Cardinality"]; // mutate
+          item["@type"] = [...types, "i72:Cardinality"];
         }
       }
     }
 
-    // Ensure each Indicator has a unit_of_measure (default unspecified) & propagate to IndicatorReport value objects
+    // Ensure each Indicator has a unit_of_measure & propagate to IndicatorReport value objects
     const indicatorUnitById: Record<string, string> = {};
     const usedUnitIris: Set<string> = new Set();
     for (const item of data) {
@@ -325,7 +318,7 @@ export async function exportData(
       const typeVal = item["@type"];
       const types = Array.isArray(typeVal) ? typeVal : [typeVal];
       if (types.includes("cids:IndicatorReport")) {
-        const indicatorId = item["forIndicator"]; // link field name assumption
+        const indicatorId = item["forIndicator"];
         const valueObj = item["i72:value"] as Record<string, any> | undefined;
         if (valueObj && !valueObj["i72:unit_of_measure"]) {
           const fallback =
@@ -337,20 +330,18 @@ export async function exportData(
       }
     }
 
-    // Inject unit definition objects for any used unit IRIs (avoid duplicates) including related cids unit IRIs referenced
+    // Inject unit definition objects for used unit IRIs
     const queue: string[] = Array.from(usedUnitIris);
     const seen: Set<string> = new Set();
     while (queue.length > 0) {
       const iri = queue.shift() as string;
       if (seen.has(iri)) continue;
       seen.add(iri);
-      // Attempt fetch definition (may fall back to static)
       try {
         const def = (await getUnitDefinition(iri)) || UNIT_DEFINITIONS[iri];
         if (def) {
           const already = data.some((d) => d && d["@id"] === iri);
           if (!already) data.push({ "@context": contextUrl, ...def });
-          // enqueue nested cids IRIs
           for (const val of Object.values(def)) {
             if (
               typeof val === "string" &&
@@ -367,11 +358,9 @@ export async function exportData(
 
     const { errors, warnings } = await validate(data, "export", intl);
 
-    // Check for unexported fields and empty tables using new helper functions
     const unexportedFieldWarnings = await checkForUnexportedFields(context, tables, fullMap, intl);
     const emptyTableWarnings = await checkForEmptyTables(context, tables, fullMap, intl);
 
-    // Include the code list warnings in the warnings
     const allWarnings = [
       ...unexportedFieldWarnings,
       ...warnings,
@@ -392,7 +381,6 @@ export async function exportData(
       return;
     }
 
-    // Always deep-clean just before potentially showing warnings (but keep original for reference)
     const cleanedData = deepCleanExportObjects(data);
     const finalData = removeNamespacePrefixesFromExport(cleanedData);
 
@@ -454,7 +442,6 @@ async function checkForEmptyTables(
   const warnings: string[] = [];
   const relevantTables = tables.filter((table) => Object.keys(fullMap).includes(table.name));
 
-  // Queue loads for all data ranges
   const tableData = relevantTables.map((table) => {
     const dataRange = table.getDataBodyRange();
     if (dataRange) {
@@ -463,12 +450,9 @@ async function checkForEmptyTables(
     return { table, dataRange };
   });
 
-  // Execute a single sync for all loads
   await context.sync();
 
-  // Check each table
   for (const { table, dataRange } of tableData) {
-    // If dataRange doesn't exist OR rowCount is 0, the table is empty
     if (!dataRange || dataRange.rowCount === 0) {
       warnings.push(
         formatMessageToString(
@@ -489,7 +473,6 @@ async function checkForEmptyTables(
   return warnings;
 }
 
-// Improved function to check for unexported fields
 async function checkForUnexportedFields(
   context: Excel.RequestContext,
   tables: Excel.Table[],
@@ -499,7 +482,6 @@ async function checkForUnexportedFields(
   const warnings: string[] = [];
   const relevantTables = tables.filter((table) => Object.keys(fullMap).includes(table.name));
 
-  // Queue loads for all header ranges
   const tableData = relevantTables.map((table) => {
     const headerRange = table.getHeaderRowRange();
     headerRange.load("values");
@@ -514,14 +496,11 @@ async function checkForUnexportedFields(
     };
   });
 
-  // Execute a single sync for all loads
   await context.sync();
 
-  // Check each table for unexported fields
   for (const { table, headerRange, internalFields } of tableData) {
     const headers = headerRange.values[0];
     for (const field of headers) {
-      // Skip if it's a table name or in ignoredFields
       if (
         Object.keys(fullMap).includes(field) ||
         (ignoredFields as any)[table.name]?.includes(field)
@@ -529,7 +508,6 @@ async function checkForUnexportedFields(
         continue;
       }
 
-      // Warn if field is not in the model
       if (!internalFields.includes(field)) {
         warnings.push(
           formatMessageToString(
@@ -551,7 +529,6 @@ async function checkForUnexportedFields(
   return warnings;
 }
 
-// New helper function to process records more efficiently
 /* eslint-disable no-param-reassign */
 async function processRecord(
   fields: FieldType[],
@@ -606,7 +583,6 @@ async function processRecord(
       if (optionField) {
         row[field.name] = field.representedType === "array" ? [optionField.id] : optionField.id;
       } else {
-        // Preserve user-entered value even if not in predefined options
         row[field.name] = field.representedType === "array" ? [fieldValue] : fieldValue;
       }
     } else if (field.type === "multiselect") {
@@ -625,9 +601,7 @@ async function processRecord(
       } else {
         optionFields = field.selectOptions?.filter((opt) => valuesArray.includes(opt.name)) || [];
       }
-      // Get IDs for recognized options
       const recognizedOptionIds = optionFields.map((opt) => opt.id);
-      // Preserve unrecognized option names (custom values)
       const unrecognizedOptionNames = valuesArray.filter(
         (val) => !optionFields.some((opt) => opt.name === val)
       );
@@ -640,11 +614,9 @@ async function processRecord(
         isEmpty = false;
 
         if (typeof fieldValue === "number") {
-          // convert excel int date to date
           fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
         }
 
-        // get local timezone
         const localTimezone = moment.tz.guess();
         const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DDTHH:mm:ssZ");
 
@@ -658,11 +630,9 @@ async function processRecord(
         isEmpty = false;
 
         if (typeof fieldValue === "number") {
-          // convert excel int date to date
           fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
         }
 
-        // get local timezone
         const localTimezone = moment.tz.guess();
         const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DD");
 
@@ -673,7 +643,6 @@ async function processRecord(
     } else if (field.type === "boolean") {
       let fieldValue = value ?? false;
 
-      // Handle string values like "TRUE", "YES", etc.
       if (typeof fieldValue === "string") {
         const upperCaseValue = fieldValue.toUpperCase();
         fieldValue = upperCaseValue === "TRUE" || upperCaseValue === "YES";
@@ -690,7 +659,7 @@ async function processRecord(
           isEmpty = false;
         }
       }
-      row[field.name] = exportValue as any; // number or null handled
+      row[field.name] = exportValue as any;
     } else {
       const fieldValue = value ?? field.defaultValue;
       if (fieldValue || fieldValue === 0) {
@@ -700,7 +669,6 @@ async function processRecord(
       if (Array.isArray(fieldValue) && field.representedType === "array") {
         exportValue = fieldValue;
       } else if (!Array.isArray(fieldValue) && field.representedType === "array") {
-        // Handle comma-separated values for array fields (e.g., @type with multiple types)
         if (typeof fieldValue === "string" && fieldValue.includes(",")) {
           exportValue = fieldValue.split(",").map((s) => s.trim());
         } else {
@@ -719,26 +687,20 @@ async function processRecord(
 
 function getFileName(orgName: string): string {
   const date = new Date();
-
-  // Get the year, month, and day from the date
   const year = date.getFullYear();
-  const month = date.getMonth() + 1; // Add 1 because months are 0-indexed.
+  const month = date.getMonth() + 1;
   const day = date.getDate();
-
-  // Format month and day to ensure they are two digits
   const monthFormatted = month < 10 ? "0" + month : month;
   const dayFormatted = day < 10 ? "0" + day : day;
-
-  // Concatenate the components to form the desired format (YYYYMMDD)
   const timestamp = `${year}${monthFormatted}${dayFormatted}`;
-
   return `CIDSBasic${orgName}${timestamp}`;
 }
 
 // Deep clean export objects removing null/undefined/empty strings/empty arrays or objects.
-// Preserve empty string for i72:hasNumericalValue.
+// Preserve empty string for i72:hasNumericalValue and unitDescription.
 function deepCleanExportObjects(items: TableInterface[]): TableInterface[] {
-  const keepEmptyKey = (key: string) => key === "i72:hasNumericalValue";
+  const keepEmptyKey = (key: string) =>
+    key === "i72:hasNumericalValue" || key === "unitDescription";
   const clean = (value: any, parentKey?: string): any => {
     if (Array.isArray(value)) {
       const arr = value
@@ -806,11 +768,9 @@ async function getObjectFieldsRecursively(
         isEmpty = false;
 
         if (typeof fieldValue === "number") {
-          // convert excel int date to date
           fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
         }
 
-        // get local timezone
         const localTimezone = moment.tz.guess();
         const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DDTHH:mm:ssZ");
 
@@ -824,11 +784,9 @@ async function getObjectFieldsRecursively(
         isEmpty = false;
 
         if (typeof fieldValue === "number") {
-          // convert excel int date to date
           fieldValue = new Date((fieldValue - (25567 + 1)) * 86400 * 1000);
         }
 
-        // get local timezone
         const localTimezone = moment.tz.guess();
         const date = moment(fieldValue).tz(localTimezone).format("YYYY-MM-DD");
 
@@ -839,7 +797,6 @@ async function getObjectFieldsRecursively(
     } else if (field.type === "boolean") {
       let fieldValue = fieldValueOnTable ?? false;
 
-      // Handle string values like "TRUE", "YES", etc.
       if (typeof fieldValue === "string") {
         const upperCaseValue = fieldValue.toUpperCase();
         fieldValue = upperCaseValue === "TRUE" || upperCaseValue === "YES";
@@ -882,7 +839,6 @@ async function getObjectFieldsRecursively(
     };
 
     for (const property of field.properties || []) {
-      // Call the function recursively
       const [newRow, newIsEmpty] = await getObjectFieldsRecursively(
         headers,
         values,
