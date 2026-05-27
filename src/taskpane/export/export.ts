@@ -1,11 +1,7 @@
 import moment from "moment-timezone";
 import { IntlShape } from "react-intl";
 import { CodeList, getCodeListByTableName } from "../domain/fetchServer/getCodeLists";
-import {
-  getUnitDefinition,
-  UNIT_DEFINITIONS,
-  UNIT_IRI,
-} from "../domain/fetchServer/getUnitsOfMeasure";
+import { getUnitDefinition, UNIT_DEFINITIONS, UNIT_IRI } from "../domain/fetchServer/getUnitsOfMeasure";
 import { TableInterface } from "../domain/interfaces/table.interface";
 import {
   contextUrl,
@@ -19,7 +15,15 @@ import {
 } from "../domain/models";
 import { Base as BaseModel, FieldType } from "../domain/models/Base";
 import { validate } from "../domain/validation/validator";
-import { downloadJSONLD, formatMessageToString } from "../utils/utils";
+import { formatMessageToString } from "../utils/utils";
+import { UNDATED_YEAR } from "./exportScan";
+
+export interface ExportFilter {
+  /** Organization @ids to include. */
+  orgIds: string[];
+  /** Reporting years (4-digit strings, or UNDATED_YEAR) to include. */
+  years: string[];
+}
 
 function removeNamespacePrefixesFromExport(items: any[]): any[] {
   return items.map((item) => {
@@ -58,13 +62,24 @@ function removeNamespacePrefixesFromExport(items: any[]): any[] {
   });
 }
 
+export interface PreparedExport {
+  /** Cleaned, prefix-stripped JSON-LD ready to download (empty when errors exist). */
+  finalData: any[];
+  /** Suggested download file name (without extension). */
+  fileName: string;
+  /** Blocking validation errors (HTML strings). Export is disallowed when non-empty. */
+  errors: string[];
+  /** Non-blocking warnings (HTML strings) to surface before exporting. */
+  warnings: string[];
+}
+
 /* global Excel*/
-export async function exportData(
+export async function prepareExportData(
   intl: IntlShape,
   orgName: string,
-  setDialogContent: (header: string, content: string, nextCallBack?: Function) => void
-): Promise<void> {
-  await Excel.run(async (context: Excel.RequestContext) => {
+  filter?: ExportFilter,
+): Promise<PreparedExport> {
+  return await Excel.run(async (context: Excel.RequestContext) => {
     const workbook = context.workbook;
     workbook.load("tables");
     await context.sync();
@@ -83,31 +98,28 @@ export async function exportData(
     const tableNames = tables.map((item) => item.name);
     for (const [key] of Object.entries(fullMap)) {
       if (!tableNames.includes(key)) {
-        setDialogContent(
-          formatMessageToString(intl, {
-            id: "generics.error",
-            defaultMessage: "Error",
-          }),
-          formatMessageToString(
-            intl,
-            {
-              id: "export.messages.error.missingTable",
-              defaultMessage:
-                "Table <b>{tableName}</b> is missing. Please create the tables first.",
-            },
-            { tableName: key, b: (str: string) => `<b>${str}</b>` }
-          )
-        );
-        return;
+        return {
+          finalData: [],
+          fileName: getFileName(orgName),
+          errors: [
+            formatMessageToString(
+              intl,
+              {
+                id: "export.messages.error.missingTable",
+                defaultMessage: "Table <b>{tableName}</b> is missing. Please create the tables first.",
+              },
+              { tableName: key, b: (str: string) => `<b>${str}</b>` },
+            ),
+          ],
+          warnings: [],
+        };
       }
     }
 
     const codeListCache: Record<string, CodeList[]> = {};
-    const codeListPromises = predefinedCodeLists
-      .filter(tableNames.includes.bind(tableNames))
-      .map(async (tableName) => {
-        codeListCache[tableName] = await getCodeListByTableName(tableName);
-      });
+    const codeListPromises = predefinedCodeLists.filter(tableNames.includes.bind(tableNames)).map(async (tableName) => {
+      codeListCache[tableName] = await getCodeListByTableName(tableName);
+    });
 
     await Promise.all(codeListPromises);
 
@@ -146,20 +158,14 @@ export async function exportData(
         // SELI-GLI Indicators are kept because they accumulate hasIndicatorReport links.
         const rowId = idColumnIndex !== -1 ? String(recordValues[idColumnIndex] ?? "") : "";
         const isCodelistId =
-          rowId.startsWith("https://codelist.commonapproach.org/") ||
-          rowId.startsWith("https://metadata.un.org/sdg/");
+          rowId.startsWith("https://codelist.commonapproach.org/") || rowId.startsWith("https://metadata.un.org/sdg/");
         if (isCodelistId) {
-          const isSeliIndicator =
-            rowId.includes("SELI-GLI#Indicator") || rowId.includes("SELI-GLI-SFI#Indicator");
+          const isSeliIndicator = rowId.includes("SELI-GLI#Indicator") || rowId.includes("SELI-GLI-SFI#Indicator");
           if (!isSeliIndicator) continue;
         }
 
         // Skip records that are defined in the common approach code lists
-        if (
-          codeList &&
-          idColumnIndex !== -1 &&
-          codeList.find((item) => item["@id"] === recordValues[idColumnIndex])
-        ) {
+        if (codeList && idColumnIndex !== -1 && codeList.find((item) => item["@id"] === recordValues[idColumnIndex])) {
           const recordId = recordValues[idColumnIndex];
           const existingItem = codeList.find((item) => item["@id"] === recordId);
 
@@ -197,8 +203,8 @@ export async function exportData(
                     id: recordId,
                     tableName: table.name,
                     b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
-                  }
-                ) as string
+                  },
+                ) as string,
               );
             }
           }
@@ -217,7 +223,7 @@ export async function exportData(
               const existingValue = (item as Record<string, any>)[key];
 
               return recordValue?.toString() === existingValue?.toString();
-            })
+            }),
           );
 
           if (similarItem) {
@@ -237,8 +243,8 @@ export async function exportData(
                   recordId: recordId || "",
                   tableName: table.name,
                   b: (str: string) => `<b style="word-break: break-word;">${str}</b>`,
-                }
-              ) as string
+                },
+              ) as string,
             );
           }
         }
@@ -271,19 +277,22 @@ export async function exportData(
 
         let isEmpty = true;
 
-        const [processedRow, rowIsEmpty] = await processRecord(
-          tableFields,
-          headers,
-          recordValues,
-          row,
-          isEmpty
-        );
+        const [processedRow, rowIsEmpty] = await processRecord(tableFields, headers, recordValues, row, isEmpty);
 
         if (!rowIsEmpty && processedRow["@id"]) {
           data.push(processedRow);
         }
       }
     }
+
+    // Scope the export to the selected organization(s) and reporting year(s).
+    // Done before unit injection so units are only emitted for kept records.
+    let scopedData = data;
+    if (filter) {
+      scopedData = filterExportDataByOrgAndYear(data, filter);
+    }
+    data.length = 0;
+    data.push(...scopedData);
 
     // Add multi-typing for Indicators with i72:cardinality_of
     for (const item of data) {
@@ -321,9 +330,7 @@ export async function exportData(
         const indicatorId = item["forIndicator"];
         const valueObj = item["i72:value"] as Record<string, any> | undefined;
         if (valueObj && !valueObj["i72:unit_of_measure"]) {
-          const fallback =
-            (typeof indicatorId === "string" && indicatorUnitById[indicatorId]) ||
-            UNIT_IRI.UNSPECIFIED;
+          const fallback = (typeof indicatorId === "string" && indicatorUnitById[indicatorId]) || UNIT_IRI.UNSPECIFIED;
           valueObj["i72:unit_of_measure"] = fallback;
           usedUnitIris.add(fallback);
         }
@@ -343,10 +350,7 @@ export async function exportData(
           const already = data.some((d) => d && d["@id"] === iri);
           if (!already) data.push({ "@context": contextUrl, ...def });
           for (const val of Object.values(def)) {
-            if (
-              typeof val === "string" &&
-              val.startsWith("https://ontology.commonapproach.org/cids#")
-            ) {
+            if (typeof val === "string" && val.startsWith("https://ontology.commonapproach.org/cids#")) {
               queue.push(val);
             }
           }
@@ -366,78 +370,196 @@ export async function exportData(
       ...warnings,
       ...emptyTableWarnings,
       ...changeOnDefaultCodeListsWarning,
-    ]
-      .filter(Boolean)
-      .join("<hr/>");
+    ].filter(Boolean);
+
+    const fileName = getFileName(orgName);
 
     if (errors.length > 0) {
-      setDialogContent(
-        formatMessageToString(intl, {
-          id: "generics.error",
-          defaultMessage: "Error",
-        }),
-        errors.map((item) => `<p>${item}</p>`).join("")
-      );
-      return;
+      return { finalData: [], fileName, errors, warnings: allWarnings };
     }
 
     const cleanedData = deepCleanExportObjects(data);
     const finalData = removeNamespacePrefixesFromExport(cleanedData);
 
-    if (allWarnings.length > 0) {
-      setDialogContent(
-        formatMessageToString(intl, {
-          id: "generics.warning",
-          defaultMessage: "Warning",
-        }),
-        allWarnings,
-        () => {
-          setDialogContent(
-            formatMessageToString(intl, {
-              id: "generics.warning",
-              defaultMessage: "Warning",
-            }),
-            formatMessageToString(intl, {
-              id: "export.messages.warning.continue",
-              defaultMessage: "<p>Do you want to export anyway?</p>",
-            }),
-            () => {
-              downloadJSONLD(finalData, `${getFileName(orgName)}.json`);
-              setDialogContent(
-                formatMessageToString(intl, {
-                  id: "generics.success",
-                  defaultMessage: "Success",
-                }),
-                formatMessageToString(intl, {
-                  id: "export.messages.success",
-                  defaultMessage: "Data exported successfully!",
-                })
-              );
-            }
-          );
-        }
-      );
-      return;
-    }
-    downloadJSONLD(finalData, `${getFileName(orgName)}.json`);
-    setDialogContent(
-      formatMessageToString(intl, {
-        id: "generics.success",
-        defaultMessage: "Success",
-      }),
-      formatMessageToString(intl, {
-        id: "export.messages.success",
-        defaultMessage: "Data exported successfully!",
-      })
-    );
+    return { finalData, fileName, errors: [], warnings: allWarnings };
   });
+}
+
+// Types whose membership is decided ONLY by their owning organization (their
+// forOrganization field, or @id for the Organization itself). They are never
+// pulled in via reachability, which keeps a shared/SELI record from leaking in
+// another organization's anchor records through its reverse-link fields.
+const ANCHOR_TYPES = new Set([
+  "Organization",
+  "Indicator",
+  "Outcome",
+  "Address",
+  "IndicatorReport",
+  "OrganizationID",
+  "OrganizationProfile",
+  "ReportInfo",
+  "FundingStatus",
+]);
+
+function getTypeLocalNames(item: any): string[] {
+  const typeVal = item?.["@type"];
+  const types = Array.isArray(typeVal) ? typeVal : [typeVal];
+  return types
+    .filter((t) => typeof t === "string")
+    .map((t: string) => (t.includes(":") ? t.split(":").pop()! : t).split(/[/#]/).pop()!);
+}
+
+function isType(item: any, localName: string): boolean {
+  return getTypeLocalNames(item).includes(localName);
+}
+
+// Year of an indicator report, derived from the (already ISO-formatted)
+// prov:endedAtTime, falling back to prov:startedAtTime, else "Undated".
+function reportYearFromItem(item: any): string {
+  const yearFromIso = (v: any): string | null => {
+    if (!v || typeof v !== "string") return null;
+    const match = v.match(/^(\d{4})-/);
+    return match ? match[1] : null;
+  };
+  return yearFromIso(item["prov:endedAtTime"]) ?? yearFromIso(item["prov:startedAtTime"]) ?? UNDATED_YEAR;
+}
+
+// Recursively collect every string value in an object that is an @id present
+// in `allIds` — i.e. the set of in-dataset records this record references.
+function collectReferencedIds(value: any, allIds: Set<string>, out: Set<string>): void {
+  if (typeof value === "string") {
+    if (allIds.has(value)) out.add(value);
+  } else if (Array.isArray(value)) {
+    for (const v of value) collectReferencedIds(v, allIds, out);
+  } else if (value && typeof value === "object") {
+    for (const [key, v] of Object.entries(value)) {
+      if (key === "@id" || key === "@type" || key === "@context") continue;
+      collectReferencedIds(v, allIds, out);
+    }
+  }
+}
+
+// Remove references to dropped @ids so the exported graph has no dangling links
+// (e.g. an Organization/Indicator pointing to a year-filtered report).
+function stripDroppedReferences(value: any, dropped: Set<string>, parentKey?: string): any {
+  if (typeof value === "string") {
+    if (parentKey !== "@id" && dropped.has(value)) return undefined;
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => stripDroppedReferences(v, dropped)).filter((v) => v !== undefined);
+  }
+  if (value && typeof value === "object") {
+    const out: any = {};
+    for (const [key, v] of Object.entries(value)) {
+      const cleaned = stripDroppedReferences(v, dropped, key);
+      if (cleaned !== undefined) out[key] = cleaned;
+    }
+    return out;
+  }
+  return value;
+}
+
+// Organization @ids referenced by a record's forOrganization field.
+function ownersOf(item: any): string[] {
+  const ownerVal = item?.["forOrganization"];
+  return (Array.isArray(ownerVal) ? ownerVal : [ownerVal]).filter(Boolean).map((o) => String(o).trim());
+}
+
+/**
+ * Restricts the built export records to the selected organization(s) and
+ * reporting year(s):
+ *  - Only organizations that actually have at least one IndicatorReport in a
+ *    selected year are kept ("active" orgs). A selected org with no matching
+ *    report is dropped entirely, along with all of its data.
+ *  - For active orgs, the full graph is kept (profile, indicators, address,
+ *    ...), but IndicatorReports are limited to the selected year(s).
+ *  - Dependent records (Theme, Population, SFF sub-profiles, CorporateRegistrar,
+ *    ...) are pulled in via reachability from kept records.
+ *  - References to dropped records are stripped to avoid dangling links.
+ */
+export function filterExportDataByOrgAndYear(data: TableInterface[], filter: ExportFilter): TableInterface[] {
+  const orgIds = new Set(filter.orgIds.map((id) => id.trim()).filter(Boolean));
+  const years = new Set(filter.years.map((y) => String(y)));
+
+  const allIds = new Set<string>(data.map((d) => String(d["@id"] ?? "")).filter((id) => id !== ""));
+  const itemById = new Map<string, TableInterface>();
+  for (const item of data) {
+    const id = String(item["@id"] ?? "");
+    if (id) itemById.set(id, item);
+  }
+
+  // Pre-pass: find the IndicatorReports that match a selected org + year, and
+  // from them the set of "active" orgs (those that actually have such a report).
+  // Orgs without any matching report are excluded entirely below.
+  const keptReportIds = new Set<string>();
+  const activeOrgIds = new Set<string>();
+  for (const item of data) {
+    const id = String(item["@id"] ?? "");
+    if (!id || !isType(item, "IndicatorReport")) continue;
+    const matchingOwners = ownersOf(item).filter((o) => orgIds.has(o));
+    if (matchingOwners.length === 0) continue;
+    if (!years.has(reportYearFromItem(item))) continue;
+    keptReportIds.add(id);
+    for (const o of matchingOwners) activeOrgIds.add(o);
+  }
+
+  const keep = new Set<string>();
+
+  // Pass 1: anchor records, decided by their (active) owning organization.
+  for (const item of data) {
+    const id = String(item["@id"] ?? "");
+    if (!id) continue;
+
+    if (isType(item, "Organization")) {
+      if (activeOrgIds.has(id.trim())) keep.add(id);
+      continue;
+    }
+
+    if (isType(item, "IndicatorReport")) {
+      if (keptReportIds.has(id)) keep.add(id);
+    } else if (ownersOf(item).some((o) => activeOrgIds.has(o))) {
+      keep.add(id);
+    }
+  }
+
+  // Pass 2: pull in dependents via reachability from kept records. Anchor types
+  // are never added here — only by Pass 1 — so other orgs cannot leak in.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const id of Array.from(keep)) {
+      const item = itemById.get(id);
+      if (!item) continue;
+      const refs = new Set<string>();
+      collectReferencedIds(item, allIds, refs);
+      for (const ref of refs) {
+        if (keep.has(ref)) continue;
+        const refItem = itemById.get(ref);
+        if (!refItem) continue;
+        const isAnchor = getTypeLocalNames(refItem).some((t) => ANCHOR_TYPES.has(t));
+        if (isAnchor) continue;
+        keep.add(ref);
+        changed = true;
+      }
+    }
+  }
+
+  // Records with no @id (e.g. injected reference objects) are retained as-is.
+  const dropped = new Set<string>([...allIds].filter((id) => !keep.has(id)));
+  const kept = data.filter((item) => {
+    const id = String(item["@id"] ?? "");
+    return id === "" || keep.has(id);
+  });
+
+  return kept.map((item) => stripDroppedReferences(item, dropped) as TableInterface);
 }
 
 async function checkForEmptyTables(
   context: Excel.RequestContext,
   tables: Excel.Table[],
   fullMap: any,
-  intl: IntlShape
+  intl: IntlShape,
 ): Promise<string[]> {
   const warnings: string[] = [];
   const relevantTables = tables.filter((table) => Object.keys(fullMap).includes(table.name));
@@ -464,8 +586,8 @@ async function checkForEmptyTables(
           {
             tableName: table.name,
             b: (str: string) => `<b>${str}</b>`,
-          }
-        )
+          },
+        ),
       );
     }
   }
@@ -477,7 +599,7 @@ async function checkForUnexportedFields(
   context: Excel.RequestContext,
   tables: Excel.Table[],
   fullMap: any,
-  intl: IntlShape
+  intl: IntlShape,
 ): Promise<string[]> {
   const warnings: string[] = [];
   const relevantTables = tables.filter((table) => Object.keys(fullMap).includes(table.name));
@@ -501,10 +623,7 @@ async function checkForUnexportedFields(
   for (const { table, headerRange, internalFields } of tableData) {
     const headers = headerRange.values[0];
     for (const field of headers) {
-      if (
-        Object.keys(fullMap).includes(field) ||
-        (ignoredFields as any)[table.name]?.includes(field)
-      ) {
+      if (Object.keys(fullMap).includes(field) || (ignoredFields as any)[table.name]?.includes(field)) {
         continue;
       }
 
@@ -519,8 +638,8 @@ async function checkForUnexportedFields(
               defaultMessage:
                 "Field <b>{fieldName}</b> in table <b>{tableName}</b> is inconsistent with the Basic Tier of the Common Impact Data Standard. This field will not be exported.",
             },
-            { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` }
-          ) as string
+            { fieldName: field, tableName: table.name, b: (str: string) => `<b>${str}</b>` },
+          ) as string,
         );
       }
     }
@@ -535,7 +654,7 @@ async function processRecord(
   headers: string[],
   recordValues: any[],
   row: TableInterface,
-  isEmpty: boolean
+  isEmpty: boolean,
 ): Promise<[TableInterface, boolean]> {
   for (const field of fields) {
     const columnIndex = headers.indexOf(field.displayName || field.name);
@@ -559,13 +678,7 @@ async function processRecord(
         row[field.name] = Array.isArray(fieldValue) ? fieldValue[0] : fieldValue;
       }
     } else if (field.type === "object") {
-      const [newRow, newIsEmpty] = await getObjectFieldsRecursively(
-        headers,
-        recordValues,
-        field,
-        row,
-        isEmpty
-      );
+      const [newRow, newIsEmpty] = await getObjectFieldsRecursively(headers, recordValues, field, row, isEmpty);
       row = { ...row, ...newRow };
       isEmpty = newIsEmpty;
     } else if (field.type === "select") {
@@ -602,12 +715,9 @@ async function processRecord(
         optionFields = field.selectOptions?.filter((opt) => valuesArray.includes(opt.name)) || [];
       }
       const recognizedOptionIds = optionFields.map((opt) => opt.id);
-      const unrecognizedOptionNames = valuesArray.filter(
-        (val) => !optionFields.some((opt) => opt.name === val)
-      );
+      const unrecognizedOptionNames = valuesArray.filter((val) => !optionFields.some((opt) => opt.name === val));
       const combinedValues = [...recognizedOptionIds, ...unrecognizedOptionNames];
-      row[field.name] =
-        field.representedType === "array" ? combinedValues : combinedValues.join(", ");
+      row[field.name] = field.representedType === "array" ? combinedValues : combinedValues.join(", ");
     } else if (field.type === "datetime") {
       let fieldValue = value ?? "";
       if (fieldValue && (typeof fieldValue === "string" || typeof fieldValue === "number")) {
@@ -699,8 +809,7 @@ function getFileName(orgName: string): string {
 // Deep clean export objects removing null/undefined/empty strings/empty arrays or objects.
 // Preserve empty string for i72:hasNumericalValue and unitDescription.
 function deepCleanExportObjects(items: TableInterface[]): TableInterface[] {
-  const keepEmptyKey = (key: string) =>
-    key === "i72:hasNumericalValue" || key === "unitDescription";
+  const keepEmptyKey = (key: string) => key === "i72:hasNumericalValue" || key === "unitDescription";
   const clean = (value: any, parentKey?: string): any => {
     if (Array.isArray(value)) {
       const arr = value
@@ -708,8 +817,7 @@ function deepCleanExportObjects(items: TableInterface[]): TableInterface[] {
         .filter((v) => {
           if (v === null || v === undefined) return false;
           if (Array.isArray(v) && v.length === 0) return false;
-          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0)
-            return false;
+          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
           return true;
         });
       return arr;
@@ -721,8 +829,7 @@ function deepCleanExportObjects(items: TableInterface[]): TableInterface[] {
           if (v === null || v === undefined) return false;
           if (typeof v === "string" && v.trim() === "" && !keepEmptyKey(k)) return false;
           if (Array.isArray(v) && v.length === 0) return false;
-          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0)
-            return false;
+          if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
           return true;
         });
       return Object.fromEntries(objEntries);
@@ -743,7 +850,7 @@ async function getObjectFieldsRecursively(
   values: any[],
   field: FieldType,
   row: any,
-  isEmpty: boolean
+  isEmpty: boolean,
 ) {
   if (field.type !== "object") {
     const columnIndex = headers.indexOf(field.displayName || field.name);
@@ -844,7 +951,7 @@ async function getObjectFieldsRecursively(
         values,
         property,
         row[field.name],
-        isEmpty
+        isEmpty,
       );
       row[field.name] = { ...row[field.name], ...newRow };
       isEmpty = newIsEmpty;
