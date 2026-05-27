@@ -1,11 +1,6 @@
 /* global window, fetch, document, HTMLInputElement, FileReader */
 import { Button, makeStyles, Spinner, tokens } from "@fluentui/react-components";
-import {
-  Add24Regular,
-  ArrowCircleDown24Regular,
-  ArrowCircleUp24Regular,
-  Book24Regular,
-} from "@fluentui/react-icons";
+import { Add24Regular, ArrowCircleDown24Regular, ArrowCircleUp24Regular, Book24Regular } from "@fluentui/react-icons";
 import { ArrowSync24Regular } from "@fluentui/react-icons/fonts";
 import * as React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -13,11 +8,7 @@ import { useDialogContext } from "../context/DialogContext";
 import { populateSeliGLI } from "../helpers/seliGLI";
 import { populateSeliGLISFI } from "../helpers/seliGLISFI";
 import { importData } from "../import/import";
-import {
-  createSFFModuleSheetsAndTables,
-  createSheetsAndTables,
-  populateCodeLists,
-} from "../taskpane";
+import { createSFFModuleSheetsAndTables, createSheetsAndTables, populateCodeLists } from "../taskpane";
 import ExportDialog from "./ExportDialog";
 import Header from "./Header";
 
@@ -93,7 +84,7 @@ const App: React.FC<AppProps> = () => {
   const handleFileChange = async (
     event: any,
     onSuccess: (data: any) => Promise<void>,
-    onError: (error: any) => void
+    onError: (error: any) => void,
   ): Promise<void> => {
     const file = event.target.files[0];
     if (file && (file.name.endsWith(".jsonld") || file.name.endsWith(".json"))) {
@@ -115,8 +106,7 @@ const App: React.FC<AppProps> = () => {
   const downloadSampleData = async (event: React.MouseEvent) => {
     event.preventDefault();
     try {
-      const url =
-        "https://ontology.commonapproach.org/examples/CIDSBasicZerokitsTestData-SHARED.json";
+      const url = "https://ontology.commonapproach.org/examples/CIDSBasicZerokitsTestData-SHARED.json";
       const response = await fetch(url);
       const data = await response.blob();
 
@@ -138,7 +128,7 @@ const App: React.FC<AppProps> = () => {
         intl.formatMessage({
           id: "import.messages.error.downloadingSampleData",
           defaultMessage: "Error downloading sample data",
-        })
+        }),
       );
     }
   };
@@ -168,7 +158,7 @@ const App: React.FC<AppProps> = () => {
         intl.formatMessage({
           id: "import.messages.error.downloadingSampleData",
           defaultMessage: "Error downloading sample data",
-        })
+        }),
       );
     }
   };
@@ -180,11 +170,7 @@ const App: React.FC<AppProps> = () => {
           <Spinner />
         </div>
       )}
-      <ExportDialog
-        isDialogOpen={isExportDialogOpen}
-        setDialogOpen={setIsExportDialogOpen}
-        setIslLoading={setIsLoading}
-      />
+      <ExportDialog isDialogOpen={isExportDialogOpen} setDialogOpen={setIsExportDialogOpen} />
       <Header />
       <div className={styles.buttons_group}>
         <input
@@ -202,7 +188,7 @@ const App: React.FC<AppProps> = () => {
                 } catch (error: any) {
                   dialog.showDialog(
                     `${intl.formatMessage({ id: "generics.error" })}!`,
-                    error.message || intl.formatMessage({ id: "generics.error.message" })
+                    error.message || intl.formatMessage({ id: "generics.error.message" }),
                   );
                 } finally {
                   setIsLoading(false);
@@ -210,11 +196,8 @@ const App: React.FC<AppProps> = () => {
               },
               (error) => {
                 setIsLoading(false);
-                dialog.showDialog(
-                  `${intl.formatMessage({ id: "generics.error" })}!`,
-                  error.message
-                );
-              }
+                dialog.showDialog(`${intl.formatMessage({ id: "generics.error" })}!`, error.message);
+              },
             );
             // clear the file input
             if (fileInputRef.current) {
@@ -268,7 +251,7 @@ const App: React.FC<AppProps> = () => {
                 intl.formatMessage({
                   id: "createTables.messages.success",
                   defaultMessage: "Tables created successfully",
-                })
+                }),
               );
             } catch (error: any) {
               dialog.showDialog(
@@ -280,7 +263,7 @@ const App: React.FC<AppProps> = () => {
                   intl.formatMessage({
                     id: "generics.error.message",
                     defaultMessage: "Something went wrong",
-                  })
+                  }),
               );
             } finally {
               setIsLoading(false);
@@ -313,7 +296,7 @@ const App: React.FC<AppProps> = () => {
                 intl.formatMessage({
                   id: "createTables.messages.success",
                   defaultMessage: "Tables created successfully",
-                })
+                }),
               );
             } catch (error: any) {
               dialog.showDialog(
@@ -325,7 +308,7 @@ const App: React.FC<AppProps> = () => {
                   intl.formatMessage({
                     id: "generics.error.message",
                     defaultMessage: "Something went wrong",
-                  })
+                  }),
               );
             } finally {
               setIsLoading(false);
@@ -358,7 +341,7 @@ const App: React.FC<AppProps> = () => {
                 intl.formatMessage({
                   id: "syncCodeLists.messages.success",
                   defaultMessage: "Code lists synchronized successfully",
-                })
+                }),
               );
             } catch (error: any) {
               dialog.showDialog(
@@ -374,9 +357,9 @@ const App: React.FC<AppProps> = () => {
                     },
                     {
                       tableName: error.message,
-                    }
+                    },
                   )
-                  ?.toString() || intl.formatMessage({ id: "generics.error.message" })
+                  ?.toString() || intl.formatMessage({ id: "generics.error.message" }),
               );
             } finally {
               setIsLoading(false);
@@ -408,9 +391,8 @@ const App: React.FC<AppProps> = () => {
                 }),
                 intl.formatMessage({
                   id: "app.button.importSeliGLI.success",
-                  defaultMessage:
-                    "SELI-GLI Themes, Outcomes, and Indicators imported successfully!",
-                })
+                  defaultMessage: "SELI-GLI Themes, Outcomes, and Indicators imported successfully!",
+                }),
               );
             } catch (error: any) {
               dialog.showDialog(
@@ -422,7 +404,7 @@ const App: React.FC<AppProps> = () => {
                   intl.formatMessage({
                     id: "generics.error.message",
                     defaultMessage: "Something went wrong",
-                  })
+                  }),
               );
             } finally {
               setIsLoading(false);
@@ -439,10 +421,7 @@ const App: React.FC<AppProps> = () => {
             color: "#1B4B9D",
           }}
         >
-          <FormattedMessage
-            id="app.button.importSeliGLI"
-            defaultMessage="Import SELI-GLI"
-          />
+          <FormattedMessage id="app.button.importSeliGLI" defaultMessage="Import SELI-GLI" />
         </Button>
         <Button
           content={intl.formatMessage({ id: "app.button.importSeliGLISFI" })}
@@ -452,12 +431,12 @@ const App: React.FC<AppProps> = () => {
               await populateSeliGLISFI();
               dialog.showDialog(
                 intl.formatMessage({ id: "generics.success" }),
-                intl.formatMessage({ id: "app.button.importSeliGLISFI.success" })
+                intl.formatMessage({ id: "app.button.importSeliGLISFI.success" }),
               );
             } catch (error: any) {
               dialog.showDialog(
                 intl.formatMessage({ id: "generics.error" }),
-                error.message || intl.formatMessage({ id: "generics.error.message" })
+                error.message || intl.formatMessage({ id: "generics.error.message" }),
               );
             } finally {
               setIsLoading(false);
@@ -477,7 +456,7 @@ const App: React.FC<AppProps> = () => {
           content={intl.formatMessage({ id: "app.button.userGuide" })}
           onClick={() => {
             window.open(
-              "https://www.commonapproach.org/wp-content/uploads/2025/05/Guide-for-Excel-Add-In-Basic-Tier-V3.0-and-SFF.pdf"
+              "https://www.commonapproach.org/wp-content/uploads/2025/05/Guide-for-Excel-Add-In-Basic-Tier-V3.0-and-SFF.pdf",
             );
           }}
           appearance="outline"
@@ -490,10 +469,7 @@ const App: React.FC<AppProps> = () => {
             color: "#FF8B3C",
           }}
         >
-          <FormattedMessage
-            id="app.button.userGuide"
-            defaultMessage="User Guide"
-          />
+          <FormattedMessage id="app.button.userGuide" defaultMessage="User Guide" />
         </Button>
       </div>
 
@@ -505,10 +481,7 @@ const App: React.FC<AppProps> = () => {
       </p>
 
       <p className={styles.note_message}>
-        <FormattedMessage
-          id="app.getSampleData"
-          defaultMessage="New user? Try importing a"
-        />{" "}
+        <FormattedMessage id="app.getSampleData" defaultMessage="New user? Try importing a" />{" "}
         <span
           aria-label="sample data file"
           className={styles.link}
@@ -516,15 +489,9 @@ const App: React.FC<AppProps> = () => {
           role="button"
           tabIndex={0}
         >
-          <FormattedMessage
-            id="app.link.sampleData"
-            defaultMessage="Basic Tier sample data file"
-          />
+          <FormattedMessage id="app.link.sampleData" defaultMessage="Basic Tier sample data file" />
         </span>{" "}
-        <FormattedMessage
-          id="generics.or"
-          defaultMessage="or"
-        />{" "}
+        <FormattedMessage id="generics.or" defaultMessage="or" />{" "}
         <span
           aria-label="sample data file + sff module"
           className={styles.link}
@@ -532,14 +499,11 @@ const App: React.FC<AppProps> = () => {
           role="button"
           tabIndex={0}
         >
-          <FormattedMessage
-            id="app.link.sampleDataSFF"
-            defaultMessage="Basic Tier + SFF sample data file"
-          />
+          <FormattedMessage id="app.link.sampleDataSFF" defaultMessage="Basic Tier + SFF sample data file" />
         </span>
       </p>
       <p style={{ fontSize: "0.7rem", color: "#999999", textAlign: "center", marginTop: "8px" }}>
-       Version {APP_VERSION}
+        Version {APP_VERSION}
       </p>
     </div>
   );
