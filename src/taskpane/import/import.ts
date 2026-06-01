@@ -671,7 +671,7 @@ async function processSingleTableBasicFields(
       if (columnIndex !== -1) {
         try {
           const cell = tableInfo.tableRange.getCell(finalRowIndex, columnIndex);
-          cell.values = [[value]];
+          cell.values = [[escapeExcelFormulaValue(value)]];
           updatedCells++;
         } catch (error) {
           console.error(
@@ -1259,6 +1259,17 @@ function processFieldForLinks(field: FieldType, value: any): Record<string, stri
   }
 
   return result;
+}
+
+// Prevent Excel from treating values that begin with a formula trigger
+// (=, +, -, @) as formulas. Prefixing with an apostrophe forces Excel to store
+// the literal text; the apostrophe is a text qualifier and is stripped on read,
+// so exports round-trip cleanly (same convention used for the "@id" header).
+function escapeExcelFormulaValue(value: any): any {
+  if (typeof value === "string" && /^[=+\-@]/.test(value)) {
+    return `'${value}`;
+  }
+  return value;
 }
 
 // Existing helper functions
