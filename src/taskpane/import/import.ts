@@ -602,7 +602,19 @@ async function processSingleTableBasicFields(
 
   // Add rows if needed
   if (rowsNeeded > 0) {
-    table.rows.add(null, rowsNeeded);
+    // Office.js requires a valid insert index (-1 = append at the end) and a 2D array
+    // of values. Passing a row count as the `values` argument (or a null index) throws
+    // "The argument is invalid or missing or has an incorrect format." Build empty rows
+    // and add them in batches to stay reliable for large imports.
+    const columnCount = tableHeaders.length;
+    const emptyRow = new Array(columnCount).fill("");
+    const ADD_ROWS_BATCH = 500;
+    for (let added = 0; added < rowsNeeded; added += ADD_ROWS_BATCH) {
+      const batchCount = Math.min(ADD_ROWS_BATCH, rowsNeeded - added);
+      const newRows = Array.from({ length: batchCount }, () => [...emptyRow]);
+      table.rows.add(-1, newRows);
+      await context.sync();
+    }
 
     // Reload table range after adding rows
     const freshRange = table.getRange();
